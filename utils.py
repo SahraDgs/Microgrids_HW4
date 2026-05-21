@@ -5,19 +5,166 @@ import numpy as np
 from param import *
 
 def check_res(res):
-    eps = 1e-3  # 1 W or .1% error tolerance
+    eps = 1e-3
+    errors = []
+
     for t in range(len(res.t)):
-        0=0
-        # TODO: Make a function that test if the physical constraitns are indead respected
-    return
+
+        # 1. Power balance
+        lhs = res.P_pv[t] + res.P_gen[t] + res.P_imp[t]
+        rhs = res.P_exp[t] + res.P_load[t]
+        if hasattr(res, 'P_bss'):
+            P_ch_bss  = max( res.P_bss[t], 0)   # positive = charging
+            P_dis_bss = max(-res.P_bss[t], 0)   # positive = discharging
+            lhs += P_dis_bss
+            rhs += P_ch_bss
+        if hasattr(res, 'P_ev'):
+            P_ch_ev  = max( res.P_ev[t], 0)
+            P_dis_ev = max(-res.P_ev[t], 0)
+            lhs += P_dis_ev
+            rhs += P_ch_ev
+        if hasattr(res, 'P_hp_hot'):
+            rhs += res.P_hp_hot[t] + res.P_hp_cold[t]
+        if abs(lhs - rhs) > eps:
+            errors.append(f"[t={t}] Power balance violated: {lhs:.4f} != {rhs:.4f} (diff={abs(lhs-rhs):.4f})")
+
+        # 2. PV limits
+        if res.P_pv[t] < -eps:
+            errors.append(f"[t={t}] P_pv negative: {res.P_pv[t]:.4f}")
+        if res.P_pv[t] > res.P_pv_max[t] + eps:
+            errors.append(f"[t={t}] P_pv exceeds MPP: {res.P_pv[t]:.4f} > {res.P_pv_max[t]:.4f}")
+
+        # 3. Battery SOC bounds
+        if hasattr(res, 'SOC_bss') and hasattr(res, 'C_bss') and res.C_bss > 0:
+            if res.SOC_bss[t] < SOC_min_bss * res.C_bss - eps:
+                errors.append(f"[t={t}] SOC_bss below min: {res.SOC_bss[t]:.4f} < {SOC_min_bss * res.C_bss:.4f}")
+            if res.SOC_bss[t] > SOC_max_bss * res.C_bss + eps:
+                errors.append(f"[t={t}] SOC_bss above max: {res.SOC_bss[t]:.4f} > {SOC_max_bss * res.C_bss:.4f}")
+
+        # 4. EV SOC bounds (only when connected)
+        if hasattr(res, 'SOC_ev') and res.EV_connected[t]:
+            if res.SOC_ev[t] < SOC_min_ev * C_ev - eps:
+                errors.append(f"[t={t}] SOC_ev below min: {res.SOC_ev[t]:.4f} < {SOC_min_ev * C_ev:.4f}")
+            if res.SOC_ev[t] > SOC_max_ev * C_ev + eps:
+                errors.append(f"[t={t}] SOC_ev above max: {res.SOC_ev[t]:.4f} > {SOC_max_ev * C_ev:.4f}")
+
+        # 5. HP temperature bounds
+        if hasattr(res, 'T_hp'):
+            if res.T_hp[t] < res.T_set[t] - delta_T_max - eps:
+                errors.append(f"[t={t}] T_hp below comfort: {res.T_hp[t]:.2f} < {res.T_set[t] - delta_T_max:.2f}")
+            if res.T_hp[t] > res.T_set[t] + delta_T_max + eps:
+                errors.append(f"[t={t}] T_hp above comfort: {res.T_hp[t]:.2f} > {res.T_set[t] + delta_T_max:.2f}")
+
+        # 6. No negative powers
+        for name, arr in [("P_imp", res.P_imp), ("P_exp", res.P_exp), ("P_gen", res.P_gen)]:
+            if arr[t] < -eps:
+                errors.append(f"[t={t}] {name} is negative: {arr[t]:.4f}")
+
+    # Report
+    if not errors:
+        print(f"check_res passed — all constraints satisfied ({len(res.t)} timesteps checked)")
+    else:
+        print(f"check_res found {len(errors)} violation(s):")
+        for e in errors[:20]:     # show at most 20 to avoid flooding the console
+            print(f"   {e}")
+        if len(errors) > 20:
+            print(f"   ... and {len(errors) - 20} more.")
+    return errors
+
 
 def print_res(res):
-    # TODO: Make a function to print a summary of the results
-    return
+    dt = delta_t   # [h]
+
+    # Energy totals [kWh]
+    E_pv      =  res.P_pv.sum()  * dt
+    E_gen     =  res.P_gen.sum() * dt
+    E_imp     =  res.P_imp.sum() * dt
+    E_exp     =  res.P_exp.sum() * dt
+    E_load    =  res.P_load.sum()* dt
+
+    # Costs [EUR]
+    cost_imp  =  E_imp  * PI_imp
+    cost_gen  =  E_gen  * PI_gen
+    revenue   =  E_exp  * PI_exp
+    total_cost = cost_imp + cost_gen - revenue
+
+    # Self-consumption & self-sufficiency
+    E_pv_used      = E_pv - E_exp                        # PV consumed locally
+    self_consumption  = 100 * E_pv_used / E_pv           if E_pv  > 0 else 0
+    self_sufficiency  = 100 * (E_pv_used + E_gen) / E_load if E_load > 0 else 0
+
+    print("=" * 52)
+    print("          OPERATIONAL PLANNING — RESULTS")
+    print("=" * 52)
+    print(f"  Simulation period     : {res.n_days} days")
+    print(f"  Time step             : {dt*60:.0f} min  ({res.t_s} steps)")
+    print("-" * 52)
+    print(f"  Energy produced (PV)  : {E_pv:>10.1f} kWh")
+    print(f"  Energy produced (gen) : {E_gen:>10.1f} kWh")
+    print(f"  Energy imported       : {E_imp:>10.1f} kWh")
+    print(f"  Energy exported       : {E_exp:>10.1f} kWh")
+    print(f"  Energy consumed       : {E_load:>10.1f} kWh")
+    print("-" * 52)
+    print(f"  Cost   — import       : {cost_imp:>10.2f} EUR")
+    print(f"  Cost   — generator    : {cost_gen:>10.2f} EUR")
+    print(f"  Revenue— export       : {revenue:>10.2f} EUR")
+    print(f"  ► Total OPEX          : {total_cost:>10.2f} EUR")
+    if hasattr(res, 'objective') and res.objective is not None:
+        print(f"  ► Objective (solver)  : {res.objective:>10.2f} EUR")
+    print("-" * 52)
+    print(f"  Self-consumption      : {self_consumption:>9.1f} %")
+    print(f"  Self-sufficiency      : {self_sufficiency:>9.1f} %")
+    print("=" * 52)
+
 
 def print_sizing_results(res):
-    # TODO: Add a print with additional info specific to part 2
-    return
+    print("=" * 52)
+    print("             SIZING — OPTIMAL ASSET SIZES")
+    print("=" * 52)
+
+    # Retrieve sizes (set by save_sizing_results)
+    C_pv_opt     = getattr(res, 'C_pv',     None)
+    P_nom_pv_opt = getattr(res, 'P_nom_pv', None)
+    C_bss_opt    = getattr(res, 'C_bss',    None)
+    P_nom_bss_opt= getattr(res, 'P_nom_bss',None)
+    P_max_gen_opt= getattr(res, 'P_max_gen',None)
+
+    if C_pv_opt      is not None: print(f"  PV system size        : {C_pv_opt:>8.2f} kWp")
+    if P_nom_pv_opt  is not None: print(f"  PV inverter           : {P_nom_pv_opt:>8.2f} kW")
+    if C_bss_opt     is not None: print(f"  Battery capacity      : {C_bss_opt:>8.2f} kWh")
+    if P_nom_bss_opt is not None: print(f"  Battery inverter      : {P_nom_bss_opt:>8.2f} kW")
+    if P_max_gen_opt is not None: print(f"  Diesel genset         : {P_max_gen_opt:>8.2f} kW")
+
+    # CAPEX breakdown (part 2)
+    print("-" * 52)
+    capex_total = 0
+    if C_pv_opt      is not None:
+        c = C_pv_opt     * PI_c_pv;   capex_total += c
+        print(f"  CAPEX PV              : {c:>8.0f} EUR  ({PI_c_pv} EUR/kWp)")
+    if P_nom_pv_opt  is not None:
+        c = P_nom_pv_opt * PI_c_inv;  capex_total += c
+        print(f"  CAPEX PV inverter     : {c:>8.0f} EUR  ({PI_c_inv} EUR/kW)")
+    if C_bss_opt     is not None:
+        c = C_bss_opt    * PI_c_bss;  capex_total += c
+        print(f"  CAPEX battery         : {c:>8.0f} EUR  ({PI_c_bss} EUR/kWh)")
+    if P_nom_bss_opt is not None:
+        c = P_nom_bss_opt* PI_c_inv;  capex_total += c
+        print(f"  CAPEX BSS inverter    : {c:>8.0f} EUR  ({PI_c_inv} EUR/kW)")
+    if P_max_gen_opt is not None:
+        c = P_max_gen_opt* PI_c_gen;  capex_total += c
+        print(f"  CAPEX genset          : {c:>8.0f} EUR  ({PI_c_gen} EUR/kW)")
+
+    print(f"  ► Total CAPEX         : {capex_total:>8.0f} EUR")
+    if inv_hor > 0:
+        print(f"  ► Annualised CAPEX    : {capex_total/inv_hor:>8.0f} EUR/year  (/{inv_hor} years)")
+
+    # OPEX reminder
+    if hasattr(res, 'objective') and res.objective is not None:
+        print("-" * 52)
+        opex = res.objective - capex_total / inv_hor  if inv_hor > 0 else res.objective
+        print(f"  OPEX (yearly)         : {opex:>8.0f} EUR/year")
+        print(f"  ► Total cost/year     : {res.objective:>8.0f} EUR/year")
+    print("=" * 52)
 
 
 
@@ -28,7 +175,7 @@ def plot_res(res):
 def solve_model(m, res):
     # Solve the optimization problem
     solver = SolverFactory('gurobi')
-    output = solver.solve(m)#, tee=True)  # Parameter 'tee=True' prints the solver output
+    output = solver.solve(m, tee=True)  # Parameter 'tee=True' prints the solver output
 
     # Print elapsed time
     status = output.solver.status

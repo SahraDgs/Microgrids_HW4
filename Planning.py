@@ -14,7 +14,6 @@ import utils
 # General -----------------------------------------------
 
 def constraint_rule_Pbalance(model, i): 
-    
     return (model.P_pv[i] + model.P_gen[i] + model.P_imp[i] + model.P_discharge_bss[i] + model.P_discharge_ev[i] == model.P_exp[i] + model.P_charge_bss[i] + model.P_charge_ev[i] + model.P_hp_hot[i] + model.P_hp_cold[i] + model.P_load[i])
 
 # Power generation (PV pannels)---------------------------
@@ -68,7 +67,7 @@ def constraint_rule_eff_ev(model, i):
     if model.EV_connected[i] == 0 or model.EV_connected[i+1] == 0:    # if the EV is not connected, the SOC is not tracked
         return Constraint.Skip
     
-    return model.SOC_ev[i+1] == model.SOC_ev[i] + eff_ev * model.P_charge_ev[i] * delta_t - (1/eff_ev) * model.P_discharge_ev[i] * delta_t
+    return model.SOC_ev[i+1] == model.SOC_ev[i] + eff_ev * model.P_charge_ev[i] * delta_t - (1/eff_ev) * model.P_discharge_ev[i] * delta_t # <- Dont't work because a boolean cannot be compared to a variable (Var()) parameter
     #consider efficiency on both charging and  discharging -> see slide 7 (this time no specified -> for both)
 
 def constraint_rule_SOC_target_leaving(model, i):
@@ -106,11 +105,39 @@ def constraint_rule_SOC_plug_in(model, i):
     return (model.SOC_ev[i] == model.SOC_i_ev[i])
 
 
-# Fixed load and Heat pump
+# Fixed load and Heat pump ---------------------------------
 
-# TO DO !!!!! (Sahra)
+# thermal dynamics 
+def constraint_rule_hp_dynamics(model, i):
+    if i == model.periods[-1]: # Do not treat the last step to avoid overflow error
+        return Constraint.Skip
+    else:
+        return (C_hp * model.T_hp[i+1] == C_hp * model.T_hp[i]
+        + delta_t * (COP_hp * model.P_hp_hot[i] - COP_hp * model.P_hp_cold[i] - model.P_loss[i]))
 
-# Controllable generation
+# thermal initial temperature
+def constraint_rule_hp_init(model, i):
+    if i != 0:
+        return Constraint.Skip
+    return model.T_hp[i] == model.T_0_hp
+
+# Max temperature
+def constraint_rule_T_max(model, i):
+    return model.T_hp[i] <= model.T_set[i] + delta_T_max
+
+# Min temperature
+def constraint_rule_T_min(model, i):
+    return model.T_hp[i] >= model.T_set[i] - delta_T_max
+
+# Max P HP hot
+def constraint_rule_hp_hot_max(model, i):
+    return model.P_hp_hot[i] <= P_max_hp
+
+# max P HP cold
+def constraint_rule_hp_cold_max(model, i):
+    return model.P_hp_cold[i] <= P_max_hp
+
+ # Controllable generation ---------------------------------------
 
 def constraint_rule_gen_max(model, i):
     return model.P_gen[i] <= model.P_max_gen   
@@ -177,8 +204,9 @@ def create_model(res,C_pv,C_bss,P_nom_bss, P_nom_pv, P_max_gen):
     model.SOC_ev = Var(model.periods, within=NonNegativeReals)             # EV state of charge [kWh]
     
     # Define the objective function ----------------------------------------------------------------------------
-    model.objective = Objective(sense=minimize,
-                                expr= 0)
+    model.objective = Objective(sense=minimize, 
+    expr=sum(delta_t * (PI_imp * model.P_imp[i] - PI_exp * model.P_exp[i] + PI_gen * model.P_gen[i]) # cost of Generator + cost of import of electricity - cost of export of electricity
+    for i in model.periods))
     
     #Constraints ---------------------------------------------------------------------------------------------------------------------------
     
@@ -208,14 +236,17 @@ def create_model(res,C_pv,C_bss,P_nom_bss, P_nom_pv, P_max_gen):
     model.constraint_SOC_plug_in = Constraint(model.periods, rule = constraint_rule_SOC_plug_in)
 
     # Fixed load and Heat pump
-
-    # TO DO !!!!!!!!!!!! (Sahra)
+    model.constraint_hp_dynamics = Constraint(model.periods, rule=constraint_rule_hp_dynamics)
+    model.constraint_hp_init = Constraint(model.periods, rule=constraint_rule_hp_init)
+    model.constraint_T_max = Constraint(model.periods, rule=constraint_rule_T_max)
+    model.constraint_T_min = Constraint(model.periods, rule=constraint_rule_T_min)
+    model.constraint_hp_hot_max = Constraint(model.periods, rule=constraint_rule_hp_hot_max)
+    model.constraint_hp_cold_max = Constraint(model.periods, rule=constraint_rule_hp_cold_max)
 
     # Controllable generation
     model.constraint_gen_max = Constraint(model.periods, rule=constraint_rule_gen_max)
 
-
-    
+   
     return model
 
 
