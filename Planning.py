@@ -4,275 +4,525 @@ from param import C_ev, P_nom_ev, eff_ev, SOC_min_ev, SOC_max_ev, SOC_target_ev
 from param import PI_gen, PI_imp, PI_exp
 from param import P_max_hp, COP_hp, delta_T_max, C_hp
 
-from pyomo.environ import ConcreteModel, Param, Var, Objective, Constraint, NonNegativeReals, minimize
+from pyomo.environ import (
+    ConcreteModel,
+    Param,
+    Var,
+    Objective,
+    Constraint,
+    NonNegativeReals,
+    minimize,
+    value,
+)
+
 from datetime import datetime
 import utils
 
 
-# Constraint Rules definitions
+# =============================================================================
+# Constraint rules
+# =============================================================================
 
-# General -----------------------------------------------
-
-def constraint_rule_Pbalance(model, i): 
-    return (model.P_pv[i] + model.P_gen[i] + model.P_imp[i] + model.P_discharge_bss[i] + model.P_discharge_ev[i] == model.P_exp[i] + model.P_charge_bss[i] + model.P_charge_ev[i] + model.P_hp_hot[i] + model.P_hp_cold[i] + model.P_load[i])
-
-# Power generation (PV pannels)---------------------------
-def constraint_rule_pv_max(model, i):
-    return (model.P_pv[i] <= model.P_pv_max[i])
-
-def constraint_rule_nom_pv(model, i):
-    return (model.P_pv[i] <= model.P_nom_pv)
-
-
-# Energy storage (Battery)--------------------------------
-
-def constraint_rule_SOC_max_bss(model, i):
-    return (model.SOC_bss[i] <= SOC_max_bss * model.C_bss)
-
-def constraint_rule_SOC_min_bss(model, i):
-    return (model.SOC_bss[i] >= SOC_min_bss * model.C_bss)
-
-def constraint_rule_eff_bss(model, i):
-    if i == model.periods[-1]:   # on the last step: avoid errors when the time i+1 does not exist in the data
-        return Constraint.Skip
-    
-    return model.SOC_bss[i+1] == model.SOC_bss[i] + eff_bss * model.P_charge_bss[i] * delta_t - model.P_discharge_bss[i] * delta_t
-     #consider efficiency only on charging (efficiency on discharging = 1) see slide 6
-
-def constraint_rule_Pbss_nom_charge(model, i):
-    return (model.P_charge_bss[i] <= model.P_nom_bss)   # output of the inverter = input or output of the battery (discharge or charge) 
-
-def constraint_rule_Pbss_nom_discharge(model, i):
-    return (model.P_discharge_bss[i] <= model.P_nom_bss)
-
-def constraint_rule_SOC_bss_init(model, i):
-    if i != 0:   # because this constraint apply only to the first step
-        return Constraint.Skip
-    
-    return model.SOC_bss[i] == model.SOC_0_bss
-
-
-# Eletric Vehicle -----------------------------------------
-
-def constraint_rule_SOC_max_ev(model, i):
-    return (model.SOC_ev[i] <= SOC_max_ev * model.C_ev)
-
-def constraint_rule_SOC_min_ev(model, i):
-    return (model.SOC_ev[i] >= SOC_min_ev * model.C_ev)
-
-def constraint_rule_eff_ev(model, i):
-    if i == model.periods[-1]:   # on the last step: avoid errors when the time i+1 does not exist in the data
-        return Constraint.Skip
-    
-    if model.EV_connected[i] == 0 or model.EV_connected[i+1] == 0:    # if the EV is not connected, the SOC is not tracked
-        return Constraint.Skip
-    
-    return model.SOC_ev[i+1] == model.SOC_ev[i] + eff_ev * model.P_charge_ev[i] * delta_t - (1/eff_ev) * model.P_discharge_ev[i] * delta_t # <- Dont't work because a boolean cannot be compared to a variable (Var()) parameter
-    #consider efficiency on both charging and  discharging -> see slide 7 (this time no specified -> for both)
-
-def constraint_rule_SOC_target_leaving(model, i):
-    if i == model.periods[0]:   # on the first step: avoid errors when the time i-1 does not exist in the data
-        return Constraint.Skip
-    if model.t_dep[i] == 0:   # not leaving -> no constraint rule
-        return Constraint.Skip
-
-    return (model.SOC_ev[i-1] == SOC_target_ev *model.C_ev)  # leaving -> must have the target SOC at the previous step
-
-def constraint_rule_Pev_nom_charge(model, i):
-    if model.EV_connected[i] == 0:    #if not connected -> impossible to charge
-        return (model.P_charge_ev[i] == 0)
-    
-    return (model.P_charge_ev[i] <= model.P_nom_ev)   # charge possible only if EV is connected 
-
-def constraint_rule_Pev_nom_discharge(model, i):
-    if model.EV_connected[i] == 0:    #if not connected -> impossible to discharge in our microgrid
-        return (model.P_discharge_ev[i] == 0)
-    
-    return (model.P_discharge_ev[i] <= model.P_nom_ev)
-
-def constraint_rule_SOC_ev_init(model, i):
-    if i != 0:   # because this constraint apply only to the first step
-        return Constraint.Skip
-    
-    return (model.SOC_ev[i] == model.SOC_0_ev)
-
-def constraint_rule_SOC_plug_in(model, i):
-    if i ==  model.periods[0]:            #because initial SOC given by the SOC_ev_init constraint
-        return Constraint.Skip   
-    if model.SOC_i_ev[i] == 0:
-        return Constraint.Skip
-    
-    return (model.SOC_ev[i] == model.SOC_i_ev[i])
-
-
-# Fixed load and Heat pump ---------------------------------
-
-# thermal dynamics 
-def constraint_rule_hp_dynamics(model, i):
-    if i == model.periods[-1]: # Do not treat the last step to avoid overflow error
-        return Constraint.Skip
-    else:
-        return (C_hp * model.T_hp[i+1] == C_hp * model.T_hp[i]
-        + delta_t * (COP_hp * model.P_hp_hot[i] - COP_hp * model.P_hp_cold[i] - model.P_loss[i]))
-
-# thermal initial temperature
-def constraint_rule_hp_init(model, i):
-    if i != 0:
-        return Constraint.Skip
-    return model.T_hp[i] == model.T_0_hp
-
-# Max temperature
-def constraint_rule_T_max(model, i):
-    return model.T_hp[i] <= model.T_set[i] + delta_T_max
-
-# Min temperature
-def constraint_rule_T_min(model, i):
-    return model.T_hp[i] >= model.T_set[i] - delta_T_max
-
-# Max P HP hot
-def constraint_rule_hp_hot_max(model, i):
-    return model.P_hp_hot[i] <= P_max_hp
-
-# max P HP cold
-def constraint_rule_hp_cold_max(model, i):
-    return model.P_hp_cold[i] <= P_max_hp
-
- # Controllable generation ---------------------------------------
-
-def constraint_rule_gen_max(model, i):
-    return model.P_gen[i] <= model.P_max_gen   
-
-# Note
-# "Avoid repetitive on-of switches": use binary variables NOT A GOOD SOLUTION (see s16) -> use the cost to avoid this behavior (see later if sufficient)
-# No constraint on loads because "Should always be satisfied" is already imposed by the fact that P_load is a param(t) and not a variable(t)
-
+# -----------------------------------------------------------------------------
+# 1. General power balance
+# -----------------------------------------------------------------------------
+def constraint_rule_power_balance(model, t):
+    return (
+        model.P_pv[t]
+        + model.P_gen[t]
+        + model.P_discharge_bss[t]
+        + model.P_discharge_ev[t]
+        + model.P_imp[t]
+        ==
+        model.P_load[t]
+        + model.P_charge_bss[t]
+        + model.P_charge_ev[t]
+        + model.P_hp_hot[t]
+        + model.P_hp_cold[t]
+        + model.P_exp[t]
+    )
 
 
 # -----------------------------------------------------------------------------
-def create_model(res,C_pv,C_bss,P_nom_bss, P_nom_pv, P_max_gen):
-    # Create a concrete model
-    model = ConcreteModel()
-    
-    model.periods = range(res.t_s)   # integer from 0 to N-1 representing all time slots
-    # model.connections = range(len(res.t_arr)) # A set is created with length equal to the number of EV connections
+# 2. PV constraints
+# -----------------------------------------------------------------------------
+def constraint_rule_pv_available(model, t):
+    # IMPORTANT:
+    # P_pv_max[t] is an MPP profile/ratio.
+    # Therefore available PV = C_pv * P_pv_max[t]
+    return model.P_pv[t] <= model.C_pv * model.P_pv_max[t]
 
-    # Access all parameters present in the res object.
-    # These exists for each t in model.t:
-    #  - model.P_load[t] = Load power at time t
-    #  - model.P_pv_max[t] = Max available PV power at time t
-    #  - model.EV_connected[t] = EV connected at time t
-    #  - model.t_arr[t] = Bollean connexion of the EV
-    #  - model.t_dep[t] = Boolean disconnexion of the EV
-    #  - model.SOC_i_ev[t] = Initial SOC of the EV connected at time t (only non zero if t_arr[t] is true)
-    model.P_load = Param(model.periods, initialize=[res.P_load[t] for t in model.periods], mutable=True)
-    model.P_pv_max = Param(model.periods, initialize=[res.P_pv_max[t] for t in  model.periods], mutable=True)
-    model.EV_connected = Param(model.periods, initialize=[res.EV_connected[t] for t in  model.periods], mutable=True)
-    model.t_arr = Param(model.periods, initialize=[res.t_arr[t] for t in model.periods], mutable=True)
-    model.t_dep = Param(model.periods, initialize=[res.t_dep[t] for t in model.periods], mutable=True)
-    model.SOC_i_ev = Param(model.periods, initialize=[res.SOC_i_ev[t] for t in model.periods], mutable=True)
-    model.T_set = Param(model.periods, initialize=[res.T_set[t] for t in model.periods], mutable=True)
-    model.P_loss = Param(model.periods, initialize=[res.P_loss[t] for t in model.periods], mutable=True)
-    model.SOC_0_bss = Param(initialize=0.5*C_bss, mutable=True)
-    model.SOC_0_ev = Param(initialize=0.5*C_ev, mutable=True)
+
+def constraint_rule_pv_inverter(model, t):
+    return model.P_pv[t] <= model.P_nom_pv
+
+
+# -----------------------------------------------------------------------------
+# 3. Generator constraints
+# -----------------------------------------------------------------------------
+def constraint_rule_gen_max(model, t):
+    return model.P_gen[t] <= model.P_max_gen
+
+
+# -----------------------------------------------------------------------------
+# 4. Battery storage constraints
+# -----------------------------------------------------------------------------
+def constraint_rule_bss_charge_power(model, t):
+    return model.P_charge_bss[t] <= model.P_nom_bss
+
+
+def constraint_rule_bss_discharge_power(model, t):
+    return model.P_discharge_bss[t] <= model.P_nom_bss
+
+
+def constraint_rule_bss_soc_min(model, t):
+    return model.SOC_bss[t] >= SOC_min_bss * model.C_bss
+
+
+def constraint_rule_bss_soc_max(model, t):
+    return model.SOC_bss[t] <= SOC_max_bss * model.C_bss
+
+
+def constraint_rule_bss_soc_dynamics(model, t):
+    if t == 0:
+        return (
+            model.SOC_bss[t]
+            ==
+            model.SOC_0_bss
+            + eff_bss * model.P_charge_bss[t] * delta_t
+            - (model.P_discharge_bss[t] / eff_bss) * delta_t
+        )
+
+    return (
+        model.SOC_bss[t]
+        ==
+        model.SOC_bss[t - 1]
+        + eff_bss * model.P_charge_bss[t] * delta_t
+        - (model.P_discharge_bss[t] / eff_bss) * delta_t
+    )
+
+
+def constraint_rule_bss_final_soc(model, t):
+    # Apply only on last time step
+    if t != model.last_period:
+        return Constraint.Skip
+
+    # Avoid ending the horizon with an artificially empty battery
+    return model.SOC_bss[t] == model.SOC_0_bss
+
+
+# -----------------------------------------------------------------------------
+# 5. EV constraints
+# -----------------------------------------------------------------------------
+def constraint_rule_ev_charge_power(model, t):
+    # If EV_connected[t] = 0 => P_charge_ev[t] <= 0
+    return model.P_charge_ev[t] <= model.P_nom_ev * model.EV_connected[t]
+
+
+def constraint_rule_ev_discharge_power(model, t):
+    # If you do not want V2G/V2H, add a separate constraint fixing this to zero.
+    return model.P_discharge_ev[t] <= model.P_nom_ev * model.EV_connected[t]
+
+
+def constraint_rule_ev_soc_min(model, t):
+    return model.SOC_ev[t] >= SOC_min_ev * model.C_ev
+
+
+def constraint_rule_ev_soc_max(model, t):
+    return model.SOC_ev[t] <= SOC_max_ev * model.C_ev
+
+
+def constraint_rule_ev_soc_dynamics(model, t):
+    # In utils.py, SOC_i_ev[t] is already in kWh.
+    # If EV arrives at time t, its SOC is reset to arrival SOC.
+
+    if t == 0:
+        if value(model.t_arr[t]) == 1:
+            initial_energy = model.SOC_i_ev[t]
+        else:
+            initial_energy = model.SOC_0_ev
+
+        return (
+            model.SOC_ev[t]
+            ==
+            initial_energy
+            + eff_ev * model.P_charge_ev[t] * delta_t
+            - (model.P_discharge_ev[t] / eff_ev) * delta_t
+        )
+
+    if value(model.t_arr[t]) == 1:
+        return (
+            model.SOC_ev[t]
+            ==
+            model.SOC_i_ev[t]
+            + eff_ev * model.P_charge_ev[t] * delta_t
+            - (model.P_discharge_ev[t] / eff_ev) * delta_t
+        )
+
+    return (
+        model.SOC_ev[t]
+        ==
+        model.SOC_ev[t - 1]
+        + eff_ev * model.P_charge_ev[t] * delta_t
+        - (model.P_discharge_ev[t] / eff_ev) * delta_t
+    )
+
+
+def constraint_rule_ev_target_departure(model, t):
+    # If EV does not leave at this time, skip.
+    if value(model.t_dep[t]) == 0:
+        return Constraint.Skip
+
+    # At departure, EV should be at least target SOC.
+    # >= is better than == because more than target is acceptable.
+    return model.SOC_ev[t] >= SOC_target_ev * model.C_ev
+
+
+def constraint_rule_no_ev_discharge(model, t):
+    # Uncomment this constraint in create_model if EV should only charge.
+    return model.P_discharge_ev[t] == 0
+
+
+# -----------------------------------------------------------------------------
+# 6. Heat pump and thermal comfort constraints
+# -----------------------------------------------------------------------------
+def constraint_rule_hp_hot_max(model, t):
+    return model.P_hp_hot[t] <= P_max_hp
+
+
+def constraint_rule_hp_cold_max(model, t):
+    return model.P_hp_cold[t] <= P_max_hp
+
+
+def constraint_rule_temperature_min(model, t):
+    return model.T_hp[t] >= model.T_set[t] - delta_T_max
+
+
+def constraint_rule_temperature_max(model, t):
+    return model.T_hp[t] <= model.T_set[t] + delta_T_max
+
+
+def constraint_rule_temperature_dynamics(model, t):
+    if t == 0:
+        return (
+            model.T_hp[t]
+            ==
+            model.T_0_hp
+            + (
+                COP_hp * model.P_hp_hot[t]
+                - COP_hp * model.P_hp_cold[t]
+                - model.P_loss[t]
+            )
+            * delta_t
+            / C_hp
+        )
+
+    return (
+        model.T_hp[t]
+        ==
+        model.T_hp[t - 1]
+        + (
+            COP_hp * model.P_hp_hot[t]
+            - COP_hp * model.P_hp_cold[t]
+            - model.P_loss[t]
+        )
+        * delta_t
+        / C_hp
+    )
+
+
+# =============================================================================
+# Model creation
+# =============================================================================
+def create_model(res, C_pv, C_bss, P_nom_bss, P_nom_pv, P_max_gen):
+    model = ConcreteModel()
+
+    model.periods = range(res.t_s)
+    model.last_period = res.t_s - 1
+
+    # -------------------------------------------------------------------------
+    # Parameters from Results object
+    # -------------------------------------------------------------------------
+    model.P_load = Param(
+        model.periods,
+        initialize=[res.P_load[t] for t in model.periods],
+        mutable=True,
+    )
+
+    model.P_pv_max = Param(
+        model.periods,
+        initialize=[res.P_pv_max[t] for t in model.periods],
+        mutable=True,
+    )
+
+    model.EV_connected = Param(
+        model.periods,
+        initialize=[res.EV_connected[t] for t in model.periods],
+        mutable=True,
+    )
+
+    model.t_arr = Param(
+        model.periods,
+        initialize=[res.t_arr[t] for t in model.periods],
+        mutable=True,
+    )
+
+    model.t_dep = Param(
+        model.periods,
+        initialize=[res.t_dep[t] for t in model.periods],
+        mutable=True,
+    )
+
+    model.SOC_i_ev = Param(
+        model.periods,
+        initialize=[res.SOC_i_ev[t] for t in model.periods],
+        mutable=True,
+    )
+
+    model.T_set = Param(
+        model.periods,
+        initialize=[res.T_set[t] for t in model.periods],
+        mutable=True,
+    )
+
+    model.P_loss = Param(
+        model.periods,
+        initialize=[res.P_loss[t] for t in model.periods],
+        mutable=True,
+    )
+
+    model.SOC_0_bss = Param(initialize=0.5 * C_bss, mutable=True)
+    model.SOC_0_ev = Param(initialize=0.5 * C_ev, mutable=True)
     model.T_0_hp = Param(initialize=res.T_set[0], mutable=True)
 
-    # Operation planning asset sizes
-    model.P_nom_pv = Param(initialize=P_nom_pv)                            # Nominal power for PV inverter
-    model.C_bss = Param(initialize=C_bss)                                  # Battery capacity
-    model.C_pv = Param(initialize=C_pv)                                    # PV system size
-    model.P_nom_bss = Param(initialize=P_nom_bss)                          # Battery inverter nominal power
-    model.P_nom_ev = Param(initialize=P_nom_ev)                            # EV inverter nominal power
-    model.C_ev = Param(initialize=C_ev)                                    # EV capacity
-    model.P_max_gen = Param(initialize=P_max_gen)                          # Maximum generator power
+    # -------------------------------------------------------------------------
+    # Fixed asset sizes for operational planning
+    # -------------------------------------------------------------------------
+    model.P_nom_pv = Param(initialize=P_nom_pv)
+    model.C_bss = Param(initialize=C_bss)
+    model.C_pv = Param(initialize=C_pv)
+    model.P_nom_bss = Param(initialize=P_nom_bss)
+    model.P_nom_ev = Param(initialize=P_nom_ev)
+    model.C_ev = Param(initialize=C_ev)
+    model.P_max_gen = Param(initialize=P_max_gen)
 
+    # -------------------------------------------------------------------------
     # Variables
-    model.P_imp = Var(model.periods, within=NonNegativeReals)              # Imported power
-    model.P_exp = Var(model.periods, within=NonNegativeReals)              # Exported power
-    model.P_pv = Var(model.periods, within=NonNegativeReals)               # PV power output 
-    model.P_gen = Var(model.periods, within=NonNegativeReals)              # Generator power output 
-    model.P_charge_bss = Var(model.periods, within=NonNegativeReals)       # Battery charging power 
-    model.P_discharge_bss = Var(model.periods, within=NonNegativeReals)    # Battery discharging power 
-    model.P_charge_ev = Var(model.periods, within=NonNegativeReals)        # EV charging power 
-    model.P_discharge_ev = Var(model.periods, within=NonNegativeReals)     # EV discharging power 
-    model.P_hp_hot = Var(model.periods, within=NonNegativeReals) 
-    model.P_hp_cold = Var(model.periods, within=NonNegativeReals) 
+    # -------------------------------------------------------------------------
+    model.P_imp = Var(model.periods, within=NonNegativeReals)
+    model.P_exp = Var(model.periods, within=NonNegativeReals)
+
+    model.P_pv = Var(model.periods, within=NonNegativeReals)
+    model.P_gen = Var(model.periods, within=NonNegativeReals)
+
+    model.P_charge_bss = Var(model.periods, within=NonNegativeReals)
+    model.P_discharge_bss = Var(model.periods, within=NonNegativeReals)
+
+    model.P_charge_ev = Var(model.periods, within=NonNegativeReals)
+    model.P_discharge_ev = Var(model.periods, within=NonNegativeReals)
+
+    model.P_hp_hot = Var(model.periods, within=NonNegativeReals)
+    model.P_hp_cold = Var(model.periods, within=NonNegativeReals)
+
     model.T_hp = Var(model.periods, within=NonNegativeReals)
 
+    model.SOC_bss = Var(model.periods, within=NonNegativeReals)
+    model.SOC_ev = Var(model.periods, within=NonNegativeReals)
 
-    # Energy storage variables for battery and EV
-    model.SOC_bss = Var(model.periods, within=NonNegativeReals)            # Bss state of charge [kWh]
-    model.SOC_ev = Var(model.periods, within=NonNegativeReals)             # EV state of charge [kWh]
-    
-    # Define the objective function ----------------------------------------------------------------------------
-    model.objective = Objective(sense=minimize, 
-    expr=sum(delta_t * (PI_imp * model.P_imp[i] - PI_exp * model.P_exp[i] + PI_gen * model.P_gen[i]) # cost of Generator + cost of import of electricity - cost of export of electricity
-    for i in model.periods))
-    
-    #Constraints ---------------------------------------------------------------------------------------------------------------------------
-    
-    #General
-    model.constraint_Pbalance = Constraint(model.periods, rule = constraint_rule_Pbalance)
+    # -------------------------------------------------------------------------
+    # Objective function
+    # -------------------------------------------------------------------------
+    eps = 1e-6
 
-    # Power generation (PV pannels) 
-    model.constraint_pv_max = Constraint(model.periods, rule = constraint_rule_pv_max)
-    model.constraint_nom_pv = Constraint(model.periods, rule = constraint_rule_nom_pv)
+    model.objective = Objective(
+        sense=minimize,
+        expr=sum(
+            delta_t
+            * (
+                PI_gen * model.P_gen[t]
+                + PI_imp * model.P_imp[t]
+                - PI_exp * model.P_exp[t]
+                + eps
+                * (
+                    model.P_charge_bss[t]
+                    + model.P_discharge_bss[t]
+                    + model.P_charge_ev[t]
+                    + model.P_discharge_ev[t]
+                    + model.P_hp_hot[t]
+                    + model.P_hp_cold[t]
+                )
+            )
+            for t in model.periods
+        ),
+    )
 
-    # Energy storage (Battery)
-    model.constraint_SOC_max_bss = Constraint(model.periods, rule = constraint_rule_SOC_max_bss)
-    model.constraint_SOC_min_bss = Constraint(model.periods, rule = constraint_rule_SOC_min_bss)
-    model.constraint_eff_bss = Constraint(model.periods, rule = constraint_rule_eff_bss)
-    model.constraint_Pbss_nom_discharge = Constraint(model.periods, rule = constraint_rule_Pbss_nom_discharge)
-    model.constraint_Pbss_nom_charge = Constraint(model.periods, rule = constraint_rule_Pbss_nom_charge)
-    model.constraint_SOC_bss_init = Constraint(model.periods, rule = constraint_rule_SOC_bss_init)
+    # -------------------------------------------------------------------------
+    # Constraints
+    # -------------------------------------------------------------------------
 
-    # Eletric Vehicle
-    model.constraint_SOC_max_ev = Constraint(model.periods, rule = constraint_rule_SOC_max_ev)
-    model.constraint_SOC_min_ev = Constraint(model.periods, rule = constraint_rule_SOC_min_ev)
-    model.constraint_eff_ev = Constraint(model.periods, rule = constraint_rule_eff_ev)
-    model.constraint_Pev_nom_charge = Constraint(model.periods, rule = constraint_rule_Pev_nom_charge)
-    model.constraint_Pev_nom_discharge = Constraint(model.periods, rule = constraint_rule_Pev_nom_discharge)
-    model.constraint_SOC_target_leaving = Constraint(model.periods, rule = constraint_rule_SOC_target_leaving)
-    model.constraint_SOC_ev_init = Constraint(model.periods, rule = constraint_rule_SOC_ev_init)
-    model.constraint_SOC_plug_in = Constraint(model.periods, rule = constraint_rule_SOC_plug_in)
+    # General
+    model.constraint_power_balance = Constraint(
+        model.periods,
+        rule=constraint_rule_power_balance,
+    )
 
-    # Fixed load and Heat pump
-    model.constraint_hp_dynamics = Constraint(model.periods, rule=constraint_rule_hp_dynamics)
-    model.constraint_hp_init = Constraint(model.periods, rule=constraint_rule_hp_init)
-    model.constraint_T_max = Constraint(model.periods, rule=constraint_rule_T_max)
-    model.constraint_T_min = Constraint(model.periods, rule=constraint_rule_T_min)
-    model.constraint_hp_hot_max = Constraint(model.periods, rule=constraint_rule_hp_hot_max)
-    model.constraint_hp_cold_max = Constraint(model.periods, rule=constraint_rule_hp_cold_max)
+    # PV
+    model.constraint_pv_available = Constraint(
+        model.periods,
+        rule=constraint_rule_pv_available,
+    )
 
-    # Controllable generation
-    model.constraint_gen_max = Constraint(model.periods, rule=constraint_rule_gen_max)
+    model.constraint_pv_inverter = Constraint(
+        model.periods,
+        rule=constraint_rule_pv_inverter,
+    )
 
-   
+    # Generator
+    model.constraint_gen_max = Constraint(
+        model.periods,
+        rule=constraint_rule_gen_max,
+    )
+
+    # BSS
+    model.constraint_bss_charge_power = Constraint(
+        model.periods,
+        rule=constraint_rule_bss_charge_power,
+    )
+
+    model.constraint_bss_discharge_power = Constraint(
+        model.periods,
+        rule=constraint_rule_bss_discharge_power,
+    )
+
+    model.constraint_bss_soc_min = Constraint(
+        model.periods,
+        rule=constraint_rule_bss_soc_min,
+    )
+
+    model.constraint_bss_soc_max = Constraint(
+        model.periods,
+        rule=constraint_rule_bss_soc_max,
+    )
+
+    model.constraint_bss_soc_dynamics = Constraint(
+        model.periods,
+        rule=constraint_rule_bss_soc_dynamics,
+    )
+
+    model.constraint_bss_final_soc = Constraint(
+        model.periods,
+        rule=constraint_rule_bss_final_soc,
+    )
+
+    # EV
+    model.constraint_ev_charge_power = Constraint(
+        model.periods,
+        rule=constraint_rule_ev_charge_power,
+    )
+
+    model.constraint_ev_discharge_power = Constraint(
+        model.periods,
+        rule=constraint_rule_ev_discharge_power,
+    )
+
+    model.constraint_ev_soc_min = Constraint(
+        model.periods,
+        rule=constraint_rule_ev_soc_min,
+    )
+
+    model.constraint_ev_soc_max = Constraint(
+        model.periods,
+        rule=constraint_rule_ev_soc_max,
+    )
+
+    model.constraint_ev_soc_dynamics = Constraint(
+        model.periods,
+        rule=constraint_rule_ev_soc_dynamics,
+    )
+
+    model.constraint_ev_target_departure = Constraint(
+        model.periods,
+        rule=constraint_rule_ev_target_departure,
+    )
+
+    # If EV discharge is not allowed, uncomment this:
+    # model.constraint_no_ev_discharge = Constraint(
+    #     model.periods,
+    #     rule=constraint_rule_no_ev_discharge,
+    # )
+
+    # Heat pump
+    model.constraint_hp_hot_max = Constraint(
+        model.periods,
+        rule=constraint_rule_hp_hot_max,
+    )
+
+    model.constraint_hp_cold_max = Constraint(
+        model.periods,
+        rule=constraint_rule_hp_cold_max,
+    )
+
+    model.constraint_temperature_min = Constraint(
+        model.periods,
+        rule=constraint_rule_temperature_min,
+    )
+
+    model.constraint_temperature_max = Constraint(
+        model.periods,
+        rule=constraint_rule_temperature_max,
+    )
+
+    model.constraint_temperature_dynamics = Constraint(
+        model.periods,
+        rule=constraint_rule_temperature_dynamics,
+    )
+
     return model
 
 
 def run(model, results):
     model, results = utils.solve_model(model, results)
+
     if model and results:
         utils.check_res(results)
         utils.print_res(results)
-        utils.plot_res(results)  
+        utils.plot_res(results)
+
     return results
 
 
 if __name__ == "__main__":
-    start_time = datetime(2021, 1, 1, 0, 0, 0)                                  # Start time of the simulation [YYYY, MM, DD, HH, MM, SS]
-    n_days = 365                                                                 # Number of days to simulate
+    start_time = datetime(2021, 1, 1, 0, 0, 0)
+
+    # For debugging: 2 or 7
+    # For final result: 365
+    n_days = 365
 
     # Given quantities for the system sizes
-    C_pv = 10                            # PV system size [kWp]
-    C_bss = 40                           # Battery capacity [kWh]	
-    P_nom_bss = 10                       # Battery inverter nominal power [kW]
-    P_nom_pv = 10                        # PV inverter nominal power [kW]
-    P_max_gen = 10                       # Maximum generator power [kW]
+    C_pv = 10
+    C_bss = 40
+    P_nom_bss = 10
+    P_nom_pv = 10
+    P_max_gen = 10
 
+    # Do not keep these equal to zero.
+    yearly_kwh = 3500
+    yearly_km = 15000
 
-    results = utils.Results(start_time, n_days, yearly_kwh=0, yearly_km=0)      # Initialize results object with start time and number of days, yearly consumption and km driven
-    model = create_model(results,C_pv,C_bss,P_nom_bss, P_nom_pv, P_max_gen)
+    results = utils.Results(
+        start_time,
+        n_days,
+        yearly_kwh=yearly_kwh,
+        yearly_km=yearly_km,
+    )
+
+    model = create_model(
+        results,
+        C_pv,
+        C_bss,
+        P_nom_bss,
+        P_nom_pv,
+        P_max_gen,
+    )
+
     run(model, results)
-
-# Report: source = https://pyomo.readthedocs.io/en/6.7.3/pyomo_overview/simple_examples.html
