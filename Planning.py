@@ -4,7 +4,7 @@ from param import C_ev, P_nom_ev, eff_ev, SOC_min_ev, SOC_max_ev, SOC_target_ev
 from param import PI_gen, PI_imp, PI_exp
 from param import P_max_hp, COP_hp, delta_T_max, C_hp
 
-from pyomo.environ import ConcreteModel, Param, Var, Objective, Constraint, NonNegativeReals, minimize
+from pyomo.environ import ConcreteModel, Param, Var, Objective, Constraint, NonNegativeReals, minimize, value
 from datetime import datetime
 import utils
 
@@ -64,7 +64,7 @@ def constraint_rule_eff_ev(model, i):
     if i == model.periods[-1]:   # on the last step: avoid errors when the time i+1 does not exist in the data
         return Constraint.Skip
     
-    if model.EV_connected[i] == 0 or model.EV_connected[i+1] == 0:    # if the EV is not connected, the SOC is not tracked
+    if value(model.EV_connected[i]) == 0 or value(model.EV_connected[i+1]) == 0:    # if the EV is not connected, the SOC is not tracked
         return Constraint.Skip
     
     return model.SOC_ev[i+1] == model.SOC_ev[i] + eff_ev * model.P_charge_ev[i] * delta_t - (1/eff_ev) * model.P_discharge_ev[i] * delta_t # <- Dont't work because a boolean cannot be compared to a variable (Var()) parameter
@@ -73,33 +73,35 @@ def constraint_rule_eff_ev(model, i):
 def constraint_rule_SOC_target_leaving(model, i):
     if i == model.periods[0]:   # on the first step: avoid errors when the time i-1 does not exist in the data
         return Constraint.Skip
-    if model.t_dep[i] == 0:   # not leaving -> no constraint rule
+    if value(model.t_dep[i]) == 0:   # not leaving -> no constraint rule
         return Constraint.Skip
 
     return (model.SOC_ev[i-1] == SOC_target_ev *model.C_ev)  # leaving -> must have the target SOC at the previous step
 
 def constraint_rule_Pev_nom_charge(model, i):
-    if model.EV_connected[i] == 0:    #if not connected -> impossible to charge
+    if value(model.EV_connected[i] == 0):    #if not connected -> impossible to charge
         return (model.P_charge_ev[i] == 0)
     
     return (model.P_charge_ev[i] <= model.P_nom_ev)   # charge possible only if EV is connected 
 
 def constraint_rule_Pev_nom_discharge(model, i):
-    if model.EV_connected[i] == 0:    #if not connected -> impossible to discharge in our microgrid
+    if value(model.EV_connected[i] == 0):    #if not connected -> impossible to discharge in our microgrid
         return (model.P_discharge_ev[i] == 0)
     
     return (model.P_discharge_ev[i] <= model.P_nom_ev)
 
+"""
 def constraint_rule_SOC_ev_init(model, i):
     if i != 0:   # because this constraint apply only to the first step
         return Constraint.Skip
     
     return (model.SOC_ev[i] == model.SOC_0_ev)
+"""
 
 def constraint_rule_SOC_plug_in(model, i):
     if i ==  model.periods[0]:            #because initial SOC given by the SOC_ev_init constraint
         return Constraint.Skip   
-    if model.SOC_i_ev[i] == 0:
+    if value(model.SOC_i_ev[i]) == 0:
         return Constraint.Skip
     
     return (model.SOC_ev[i] == model.SOC_i_ev[i])
@@ -232,7 +234,7 @@ def create_model(res,C_pv,C_bss,P_nom_bss, P_nom_pv, P_max_gen):
     model.constraint_Pev_nom_charge = Constraint(model.periods, rule = constraint_rule_Pev_nom_charge)
     model.constraint_Pev_nom_discharge = Constraint(model.periods, rule = constraint_rule_Pev_nom_discharge)
     model.constraint_SOC_target_leaving = Constraint(model.periods, rule = constraint_rule_SOC_target_leaving)
-    model.constraint_SOC_ev_init = Constraint(model.periods, rule = constraint_rule_SOC_ev_init)
+    # model.constraint_SOC_ev_init = Constraint(model.periods, rule = constraint_rule_SOC_ev_init)
     model.constraint_SOC_plug_in = Constraint(model.periods, rule = constraint_rule_SOC_plug_in)
 
     # Fixed load and Heat pump
