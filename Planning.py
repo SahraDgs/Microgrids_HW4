@@ -67,7 +67,7 @@ def constraint_rule_eff_ev(model, i):
     if value(model.EV_connected[i]) == 0 or value(model.EV_connected[i+1]) == 0:    # if the EV is not connected, the SOC is not tracked
         return Constraint.Skip
     
-    return model.SOC_ev[i+1] == model.SOC_ev[i] + eff_ev * model.P_charge_ev[i] * delta_t - (1/eff_ev) * model.P_discharge_ev[i] * delta_t # <- Dont't work because a boolean cannot be compared to a variable (Var()) parameter
+    return model.SOC_ev[i+1] == model.SOC_ev[i] + eff_ev * model.P_charge_ev[i] * delta_t - (1/eff_ev) * model.P_discharge_ev[i] * delta_t 
     #consider efficiency on both charging and  discharging -> see slide 7 (this time no specified -> for both)
 
 def constraint_rule_SOC_target_leaving(model, i):
@@ -79,7 +79,7 @@ def constraint_rule_SOC_target_leaving(model, i):
     return (model.SOC_ev[i-1] == SOC_target_ev *model.C_ev)  # leaving -> must have the target SOC at the previous step
 
 def constraint_rule_Pev_nom_charge(model, i):
-    if value(model.EV_connected[i] == 0):    #if not connected -> impossible to charge
+    if value(model.EV_connected[i]) == 0:    #if not connected -> impossible to charge
         return (model.P_charge_ev[i] == 0)
     
     return (model.P_charge_ev[i] <= model.P_nom_ev)   # charge possible only if EV is connected 
@@ -90,32 +90,36 @@ def constraint_rule_Pev_nom_discharge(model, i):
     
     return (model.P_discharge_ev[i] <= model.P_nom_ev)
 
-"""
+
 def constraint_rule_SOC_ev_init(model, i):
-    if i != 0:   # because this constraint apply only to the first step
+    if i != 0:   # because this constraint apply only to the first step (init)
+        return Constraint.Skip
+    if value(model.SOC_i_ev[i]) != 0:   # because if we are plug-in at start, we must use the "Initial SOC of the EV connected"
         return Constraint.Skip
     
+    # if the car is away at start we want to give an initial value (to start somewhere)
     return (model.SOC_ev[i] == model.SOC_0_ev)
-"""
 
-def constraint_rule_SOC_plug_in(model, i):
-    if i ==  model.periods[0]:            #because initial SOC given by the SOC_ev_init constraint
-        return Constraint.Skip   
+
+def constraint_rule_SOC_plug_in(model, i):  
     if value(model.SOC_i_ev[i]) == 0:
         return Constraint.Skip
     
     return (model.SOC_ev[i] == model.SOC_i_ev[i])
 
 
-# Fixed load and Heat pump ---------------------------------
+# Heat pump ---------------------------------
 
 # thermal dynamics 
 def constraint_rule_hp_dynamics(model, i):
     if i == model.periods[-1]: # Do not treat the last step to avoid overflow error
         return Constraint.Skip
     else:
+        #thermal balance
         return (C_hp * model.T_hp[i+1] == C_hp * model.T_hp[i]
         + delta_t * (COP_hp * model.P_hp_hot[i] - COP_hp * model.P_hp_cold[i] - model.P_loss[i]))
+        # thermal energy of the house at t+1 = thermal energy at t 
+        # + heat entering (thermal energy added) - heat removed (thermal energy removed)  - losses) 
 
 # thermal initial temperature
 def constraint_rule_hp_init(model, i):
@@ -139,14 +143,10 @@ def constraint_rule_hp_hot_max(model, i):
 def constraint_rule_hp_cold_max(model, i):
     return model.P_hp_cold[i] <= P_max_hp
 
- # Controllable generation ---------------------------------------
+# Controllable generation ---------------------------------------
 
 def constraint_rule_gen_max(model, i):
     return model.P_gen[i] <= model.P_max_gen   
-
-# Note
-# "Avoid repetitive on-of switches": use binary variables NOT A GOOD SOLUTION (see s16) -> use the cost to avoid this behavior (see later if sufficient)
-# No constraint on loads because "Should always be satisfied" is already imposed by the fact that P_load is a param(t) and not a variable(t)
 
 
 
@@ -207,7 +207,7 @@ def create_model(res,C_pv,C_bss,P_nom_bss, P_nom_pv, P_max_gen):
     
     # Define the objective function ----------------------------------------------------------------------------
     model.objective = Objective(sense=minimize, 
-    expr=sum(delta_t * (PI_imp * model.P_imp[i] - PI_exp * model.P_exp[i] + PI_gen * model.P_gen[i]) # cost of Generator + cost of import of electricity - cost of export of electricity
+    expr=sum(delta_t * (PI_imp * model.P_imp[i] - PI_exp * model.P_exp[i] + PI_gen * model.P_gen[i]) #  cost of import of electricity - cost of export of electricity + cost of Generator
     for i in model.periods))
     
     #Constraints ---------------------------------------------------------------------------------------------------------------------------
@@ -234,7 +234,7 @@ def create_model(res,C_pv,C_bss,P_nom_bss, P_nom_pv, P_max_gen):
     model.constraint_Pev_nom_charge = Constraint(model.periods, rule = constraint_rule_Pev_nom_charge)
     model.constraint_Pev_nom_discharge = Constraint(model.periods, rule = constraint_rule_Pev_nom_discharge)
     model.constraint_SOC_target_leaving = Constraint(model.periods, rule = constraint_rule_SOC_target_leaving)
-    # model.constraint_SOC_ev_init = Constraint(model.periods, rule = constraint_rule_SOC_ev_init)
+    model.constraint_SOC_ev_init = Constraint(model.periods, rule = constraint_rule_SOC_ev_init)
     model.constraint_SOC_plug_in = Constraint(model.periods, rule = constraint_rule_SOC_plug_in)
 
     # Fixed load and Heat pump
@@ -273,7 +273,7 @@ if __name__ == "__main__":
     P_max_gen = 10                       # Maximum generator power [kW]
 
 
-    results = utils.Results(start_time, n_days, yearly_kwh=0, yearly_km=0)      # Initialize results object with start time and number of days, yearly consumption and km driven
+    results = utils.Results(start_time, n_days, yearly_kwh=3900, yearly_km=15411)      # Initialize results object with start time and number of days, yearly consumption and km driven
     model = create_model(results,C_pv,C_bss,P_nom_bss, P_nom_pv, P_max_gen)
     run(model, results)
 
