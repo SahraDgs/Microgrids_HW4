@@ -92,7 +92,7 @@ def print_res(res):
 
     print()
     print("----- OPERATIONAL PLANNING RESULTS -----")
-    print(f"Simulation period : {res.n_days} days ({res.t_s} steps of {dt*60:0f} min)")
+    print(f"Simulation period : {res.n_days} days ({res.t_s} steps of {dt*60:.0f} min)")
     print()
     print(f"PV produced    : {E_pv:.1f} kWh")
     print(f"Gen produced   : {E_gen:.1f} kWh")
@@ -165,11 +165,8 @@ def plot_res_day(res):
     day = 220                              
     start = day * steps_per_day
     end   = start + steps_per_day
-    hours = np.arange(steps_per_day) * dt # x-axis: 0 to 24 h
-
-    # EV charge / discharge
-    P_ev_dis  = np.maximum(-res.P_ev[start:end], 0)
-    P_ev_ch   = np.maximum( res.P_ev[start:end], 0)
+    time_x = np.arange(steps_per_day) * dt # x-axis: 0 to 24 h
+   
 
     # battery SOC in percent of capacity
     SOC_bss_pct = 100 * res.SOC_bss[start:end] / res.C_bss
@@ -179,27 +176,28 @@ def plot_res_day(res):
     fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(11, 10), sharex=True)
 
     # Graph 1: PV production + grid exchange
-    ax1.plot(hours, res.P_pv[start:end],  label='PV production')
-    ax1.plot(hours, res.P_imp[start:end], label='Import')
-    ax1.plot(hours, res.P_exp[start:end], label='Export')
+    ax1.plot(time_x, res.P_pv[start:end],  label='PV production')
+    ax1.plot(time_x, res.P_imp[start:end] - res.P_exp[start:end], label='Import/export')
+    ax1.plot(time_x, -res.P_ev[start:end], label='EV discharge/charge')
+    ax1.plot(time_x, -res.P_bss[start:end], label='battery discharge/charge')
+
     ax1.set_ylabel('Power [kW]')
     ax1.legend(title=f'Production and grid exchange')
     ax1.set_title(f'Day {day}')
     ax1.grid(True)
 
     # Graph 2: consumption breakdown
-    ax2.plot(hours, res.P_load[start:end], label='Load')
-    ax2.plot(hours, res.P_hp_hot[start:end], label='HP heating')
-    ax2.plot(hours, res.P_hp_cold[start:end], label='HP cooling')
-    ax2.plot(hours, P_ev_ch, label='EV charging')
-    ax2.plot(hours, P_ev_dis, label='EV discharging')
+    ax2.plot(time_x, res.P_load[start:end], label='Load')
+    ax2.plot(time_x, res.P_hp_hot[start:end], label='HP heating')
+    ax2.plot(time_x, res.P_hp_cold[start:end], label='HP cooling')
+
     ax2.set_ylabel('Power [kW]')
     ax2.legend(title='Consumption')
     ax2.grid(True)
 
     # Graph 3: battery SOC (%)
-    ax3.plot(hours, SOC_bss_pct, label='Battery SOC')
-    ax3.plot(hours, SOC_ev_pct, label='EV SOC')
+    ax3.plot(time_x, SOC_bss_pct, label='Battery SOC')
+    ax3.plot(time_x, SOC_ev_pct, label='EV SOC')
     ax3.axhline(100 * SOC_min_bss, color='red', linestyle='--', label='SOC min')
     ax3.axhline(100 * SOC_max_bss, color='green', linestyle='--', label='SOC max')
     ax3.set_ylabel('SOC [%]')
@@ -210,7 +208,7 @@ def plot_res_day(res):
     plt.tight_layout()
     plt.savefig(f'dispatch_day_{day}.png', dpi=150, bbox_inches='tight')
     plt.show()
-    
+
 
 # The following function is not used in the main code as explained in the report
 
@@ -222,37 +220,29 @@ def plot_res_week(res):
     start_day = 29 
     start = start_day * steps_per_day
     end   = start + 7 * steps_per_day
-    days  = np.arange(7 * steps_per_day) * dt / 24
-
-    # split signed EV power into charge / discharge
-    P_ev_dis = np.maximum(-res.P_ev[start:end], 0)
-    P_ev_ch  = np.maximum( res.P_ev[start:end], 0)
+    time_x  = np.arange(7 * steps_per_day) * dt / 24
 
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
 
     # Graph 1: PV production + grid exchange
-    ax1.plot(days, res.P_pv[start:end], label='PV production')
-    ax1.plot(days, res.P_imp[start:end], label='Import')
-    ax1.plot(days, res.P_exp[start:end], label='Export')
+    ax1.plot(time_x, res.P_pv[start:end],  label='PV production')
+    ax1.plot(time_x, res.P_imp[start:end] - res.P_exp[start:end], label='Net grid (import − export)')
+    ax1.plot(time_x, - res.P_ev[start:end], label='EV (discharge + / charge −)')
+    ax1.plot(time_x, - res.P_bss[start:end], label='Battery (discharge + / charge −)')
+
     ax1.set_ylabel('Power [kW]')
-    ax1.legend(title=f'Production and grid exchange')
+    ax1.legend(title=f'Generation, grid and storage')
     ax1.set_title(f'Week from day {start_day}')
     ax1.grid(True)
 
-    # Graph 2: consumption breakdown 
-    ax2.plot(days, res.P_load[start:end], label='Load')
-    ax2.plot(days, res.P_hp_hot[start:end], label='HP heating')
-    ax2.plot(days, res.P_hp_cold[start:end], label='HP cooling')
-    ax2.plot(days, P_ev_ch, label='EV charging')
+    # Graph 2: consumption breakdown
+    ax2.plot(time_x, res.P_load[start:end], label='Load')
+    ax2.plot(time_x, res.P_hp_hot[start:end], label='HP heating')
+    ax2.plot(time_x, res.P_hp_cold[start:end], label='HP cooling')
+    
     ax2.set_ylabel('Power [kW]')
-    ax2.set_xlabel('Time [days]')
-    ax2.legend(title='Consumption')
+    ax2.legend(title='Loads (consumption)')
     ax2.grid(True)
-
-    plt.tight_layout()
-    plt.savefig(f'dispatch_week_{start_day}.png', dpi=150, bbox_inches='tight')
-    plt.show()
-
 
 def solve_model(m, res):
     # Solve the optimization problem
