@@ -257,7 +257,8 @@ def run(model, results):
     if model and results:
         utils.check_res(results)
         utils.print_res(results)
-        utils.plot_res(results)  
+        utils.plot_res_day(results)
+        #utils.plot_res_week(results)   
     return results
 
 
