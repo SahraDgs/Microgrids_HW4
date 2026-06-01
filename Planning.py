@@ -18,7 +18,7 @@ def constraint_rule_Pbalance(model, i):
 
 # Power generation (PV pannels)---------------------------
 def constraint_rule_pv_max(model, i):
-    return (model.P_pv[i] <= model.P_pv_max[i])
+    return (model.P_pv[i] <= model.P_pv_max[i] * model.C_pv)
 
 def constraint_rule_nom_pv(model, i):
     return (model.P_pv[i] <= model.P_nom_pv)
@@ -85,7 +85,7 @@ def constraint_rule_Pev_nom_charge(model, i):
     return (model.P_charge_ev[i] <= model.P_nom_ev)   # charge possible only if EV is connected 
 
 def constraint_rule_Pev_nom_discharge(model, i):
-    if value(model.EV_connected[i] == 0):    #if not connected -> impossible to discharge in our microgrid
+    if value(model.EV_connected[i]) == 0:    #if not connected -> impossible to discharge in our microgrid
         return (model.P_discharge_ev[i] == 0)
     
     return (model.P_discharge_ev[i] <= model.P_nom_ev)
@@ -274,7 +274,7 @@ if __name__ == "__main__":
     P_max_gen = 10                       # Maximum generator power [kW]
 
 
-    results = utils.Results(start_time, n_days, yearly_kwh=3900, yearly_km=15411)      # Initialize results object with start time and number of days, yearly consumption and km driven
+    results = utils.Results(start_time, n_days, yearly_kwh=3900, yearly_km=14770)      # Initialize results object with start time and number of days, yearly consumption and km driven
     model = create_model(results,C_pv,C_bss,P_nom_bss, P_nom_pv, P_max_gen)
     run(model, results)
 

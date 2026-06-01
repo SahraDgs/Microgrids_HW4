@@ -24,8 +24,8 @@ def check_res(res):
             n_errors += 1
 
         # 2. PV limits
-        if res.P_pv[t] > res.P_pv_max[t] + eps:    # error if we are above the max value
-            print(f"[t={t}] P_pv {res.P_pv[t]:f} above the maximal value {res.P_pv_max[t]:f}")
+        if res.P_pv[t] > res.P_pv_max[t]*res.C_pv + eps:    # error if we are above the max value
+            print(f"[t={t}] P_pv {res.P_pv[t]:f} above the maximal value {res.P_pv_max[t]*res.C_pv:f}")
             n_errors += 1
 
         # 3. Battery SOC bounds
@@ -162,7 +162,7 @@ def plot_res_day(res):
     steps_per_day = int(24 / dt)
 
     # day to plot 
-    day = 220                              
+    day = 233                              
     start = day * steps_per_day
     end   = start + steps_per_day
     time_x = np.arange(steps_per_day) * dt # x-axis: 0 to 24 h
@@ -206,7 +206,7 @@ def plot_res_day(res):
     ax3.grid(True)
 
     plt.tight_layout()
-    plt.savefig(f'dispatch_day_{day}.png', dpi=150, bbox_inches='tight')
+    plt.savefig(f'day_{day}.png', dpi=150, bbox_inches='tight')
     plt.show()
 
 
@@ -217,12 +217,17 @@ def plot_res_week(res):
     steps_per_day = int(24 / dt)
 
     # choose the week
-    start_day = 29 
+    start_day = 229 
     start = start_day * steps_per_day
     end   = start + 7 * steps_per_day
     time_x  = np.arange(7 * steps_per_day) * dt / 24
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
+    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(11, 10), sharex=True)
+
+    # battery SOC in percent of capacity
+    SOC_bss_pct = 100 * res.SOC_bss[start:end] / res.C_bss
+    SOC_ev_pct  = 100 * res.SOC_ev[start:end]  / res.C_ev
+    SOC_ev_pct = np.where(res.EV_connected[start:end] == 1, SOC_ev_pct, np.nan)
 
     # Graph 1: PV production + grid exchange
     ax1.plot(time_x, res.P_pv[start:end],  label='PV production')
@@ -243,6 +248,20 @@ def plot_res_week(res):
     ax2.set_ylabel('Power [kW]')
     ax2.legend(title='Loads (consumption)')
     ax2.grid(True)
+
+    # Graph 3: battery SOC (%)
+    ax3.plot(time_x, SOC_bss_pct, label='Battery SOC')
+    ax3.plot(time_x, SOC_ev_pct, label='EV SOC')
+    ax3.axhline(100 * SOC_min_bss, color='red', linestyle='--', label='SOC min')
+    ax3.axhline(100 * SOC_max_bss, color='green', linestyle='--', label='SOC max')
+    ax3.set_ylabel('SOC [%]')
+    ax3.set_xlabel('Time [h]')
+    ax3.legend(title='Battery state of charge')
+    ax3.grid(True)
+
+    plt.tight_layout()
+    plt.savefig(f'week_start_day_{start_day}.png', dpi=150, bbox_inches='tight')
+    plt.show()
 
 def solve_model(m, res):
     # Solve the optimization problem
