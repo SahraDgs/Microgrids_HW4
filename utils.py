@@ -72,21 +72,28 @@ def print_res(res):
     E_exp = res.P_exp.sum() * dt
     E_load = res.P_load.sum() * dt
 
+    E_hp = res.P_hp_hot.sum() * dt + res.P_hp_cold.sum() * dt   # heat pump
+    E_ev = res.P_ev.sum() * dt                                  # net EV charging (charge - discharge in the bus)
+
     # Costs [EUR]
     cost_imp = E_imp * PI_imp
     cost_gen = E_gen * PI_gen
     revenue = E_exp * PI_exp
     total_cost = cost_imp + cost_gen - revenue
 
-    # Self-consumption & self-sufficiency
+    # Self consumption
     E_pv_used = E_pv - E_exp                        # PV consumed locally
     if E_pv > 0:                # to avoid dividing by 0
         self_consumption = 100 * E_pv_used / E_pv
     else:
         self_consumption = 0
-
-    if E_load > 0:
-        self_sufficiency = 100 * (E_pv_used + E_gen) / E_load
+    
+    #Self sufficiency
+    
+    E_cons = E_load + E_hp + E_ev                             # total comsumption
+    
+    if E_cons > 0:   # to avoid dividing by 0
+        self_sufficiency = 100 * (E_cons - E_imp - E_gen) / E_cons
     else:
         self_sufficiency = 0
 
@@ -94,17 +101,25 @@ def print_res(res):
     print("----- OPERATIONAL PLANNING RESULTS -----")
     print(f"Simulation period : {res.n_days} days ({res.t_s} steps of {dt*60:.0f} min)")
     print()
-    print(f"PV produced    : {E_pv:.1f} kWh")
-    print(f"Gen produced   : {E_gen:.1f} kWh")
-    print(f"Imported       : {E_imp:.1f} kWh")
-    print(f"Exported       : {E_exp:.1f} kWh")
-    print(f"Load consumed  : {E_load:.1f} kWh")
+    print(f"PV produced     : {E_pv:.1f} kWh")
+    print(f"Gen produced    : {E_gen:.1f} kWh")
+    print(f"Imported        : {E_imp:.1f} kWh")
+    print(f"Exported        : {E_exp:.1f} kWh")
+    print()
+    print(f"-> Net energy produced/imported   : {-E_exp+E_pv+E_imp+E_gen:.1f} kWh")
+    print()
+    print(f"Load consumption: {E_load:.1f} kWh")
+    print(f"HP consumption  : {E_hp:.1f} kWh")
+    print(f"EV consumption  : {E_ev:.1f} kWh")
+    print()
+    print(f"-> Total consumption  : {E_cons:.1f} kWh")
     print()
     print(f"Import cost     : {cost_imp:.2f} EUR")
     print(f"Generator cost  : {cost_gen:.2f} EUR")
     print(f"Export revenue  : {revenue:.2f} EUR")
-    print(f"Total OPEX      : {total_cost:.2f} EUR")
-    print(f"Solver objective: {res.objective:.2f} EUR")
+    print()
+    print(f"-> Total OPEX   : {total_cost:.2f} EUR")
+    print(f"Solver objective: {res.objective:.2f} EUR      (should be equal to Total OPEX)")
     print()
     print(f"Self-consumption : {self_consumption:.1f} %")
     print(f"Self-sufficiency : {self_sufficiency:.1f} %")
@@ -162,7 +177,7 @@ def plot_res_day(res):
     steps_per_day = int(24 / dt)
 
     # day to plot 
-    day = 233                              
+    day = 15                              
     start = day * steps_per_day
     end   = start + steps_per_day
     time_x = np.arange(steps_per_day) * dt # x-axis: 0 to 24 h
@@ -173,19 +188,21 @@ def plot_res_day(res):
     SOC_ev_pct  = 100 * res.SOC_ev[start:end]  / res.C_ev
     SOC_ev_pct = np.where(res.EV_connected[start:end] == 1, SOC_ev_pct, np.nan)
 
-    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(11, 10), sharex=True)
+    fig, (ax1, ax3) = plt.subplots(2, 1, figsize=(18, 10), sharex=True)
 
     # Graph 1: PV production + grid exchange
     ax1.plot(time_x, res.P_pv[start:end],  label='PV production')
     ax1.plot(time_x, res.P_imp[start:end] - res.P_exp[start:end], label='Import/export')
     ax1.plot(time_x, -res.P_ev[start:end], label='EV discharge/charge')
-    ax1.plot(time_x, -res.P_bss[start:end], label='battery discharge/charge')
+    ax1.plot(time_x, -res.P_bss[start:end], label='Battery discharge/charge')
+    ax1.plot(time_x, res.P_gen[start:end], label='Genset production')   
 
     ax1.set_ylabel('Power [kW]')
     ax1.legend(title=f'Production and grid exchange')
     ax1.set_title(f'Day {day}')
     ax1.grid(True)
 
+    '''
     # Graph 2: consumption breakdown
     ax2.plot(time_x, res.P_load[start:end], label='Load')
     ax2.plot(time_x, res.P_hp_hot[start:end], label='HP heating')
@@ -194,6 +211,7 @@ def plot_res_day(res):
     ax2.set_ylabel('Power [kW]')
     ax2.legend(title='Consumption')
     ax2.grid(True)
+    '''
 
     # Graph 3: battery SOC (%)
     ax3.plot(time_x, SOC_bss_pct, label='Battery SOC')
@@ -206,7 +224,7 @@ def plot_res_day(res):
     ax3.grid(True)
 
     plt.tight_layout()
-    plt.savefig(f'day_{day}.png', dpi=150, bbox_inches='tight')
+    plt.savefig(f'day_{day}_ImportCost_7.png', dpi=150, bbox_inches='tight')
     plt.show()
 
 

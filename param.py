@@ -11,7 +11,7 @@ inv_hor = 20                                       # Investment horizon [year]
 #  Costs
 # ==============  Operation  ==================================================
 PI_gen = 0.6                          # Fuel costs for generator [EUR/kWh]
-PI_imp = 0.4                          # Cost of importing energy [EUR/kWh]
+PI_imp = 0.7                          # Cost of importing energy [EUR/kWh]
 PI_exp = 0.03                         # Revenue from exporting energy [EUR/kWh]
 # ==============  Investment  =================================================
 PI_c_pv = 1800                        # Cost of PV capacity [EUR/kWp]
@@ -39,8 +39,8 @@ SOC_max_ev = 0.95               # Maximum SOC for the EV battery [0, 1]
 # HP Parameters 
 P_max_hp = 10 #Nominal power of the HP [kW]
 COP_hp = 2.5 # Coefficient of Performance [kWth/kWe]
-delta_T_max = 2 # Accepted temperature range [°]
-C_hp = (307781.25 + 0.5*307781.25)/(1e3*60*60) # Home thermal inertia [kWh/°]
+delta_T_max = 2 # Accepted temperature range [ï¿½]
+C_hp = (307781.25 + 0.5*307781.25)/(1e3*60*60) # Home thermal inertia [kWh/ï¿½]
 
 
 
