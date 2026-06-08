@@ -114,12 +114,12 @@ def print_res(res):
     print()
     print(f"-> Total consumption  : {E_cons:.1f} kWh")
     print()
-    print(f"Import cost     : {cost_imp:.2f} EUR")
-    print(f"Generator cost  : {cost_gen:.2f} EUR")
-    print(f"Export revenue  : {revenue:.2f} EUR")
+    print(f"Import cost     : {cost_imp:.1f} EUR")
+    print(f"Generator cost  : {cost_gen:.1f} EUR")
+    print(f"Export revenue  : {revenue:.1f} EUR")
     print()
-    print(f"-> Total OPEX   : {total_cost:.2f} EUR")
-    print(f"Solver objective: {res.objective:.2f} EUR      (should be equal to Total OPEX)")
+    print(f"-> Total OPEX   : {total_cost:.1f} EUR")
+    print(f"Solver objective: {res.objective:.1f} EUR      (should be equal to Total OPEX)")
     print()
     print(f"Self-consumption : {self_consumption:.1f} %")
     print(f"Self-sufficiency : {self_sufficiency:.1f} %")
@@ -127,49 +127,125 @@ def print_res(res):
 
 def print_sizing_results(res):
 
+    dt = delta_t   # [h]
 
-    # TO CHANGE WHEN WE DO PHASE 2 !!!!
+    # Energy totals [kWh]
+    E_pv = res.P_pv.sum() * dt
+    E_gen = res.P_gen.sum() * dt
+    E_imp = res.P_imp.sum() * dt
+    E_exp = res.P_exp.sum() * dt
+    E_load = res.P_load.sum() * dt
 
-    # Optimal asset sizes (decided by the optimizer)
+    E_hp = res.P_hp_hot.sum() * dt + res.P_hp_cold.sum() * dt   # heat pump
+    E_ev = res.P_ev.sum() * dt                                  # net EV charging (charge - discharge in the bus)
+
+    # Costs [EUR]
+    cost_imp = E_imp * PI_imp
+    cost_gen = E_gen * PI_gen
+    if unpaid_exp:
+        PI_exp_case = 0
+    else:
+        PI_exp_case = PI_exp
+    revenue = E_exp * PI_exp_case
+    total_OPEX = cost_imp + cost_gen - revenue
+
+    # Self consumption
+    E_pv_used = E_pv - E_exp                        # PV consumed locally
+    if E_pv > 0:                # to avoid dividing by 0
+        self_consumption = 100 * E_pv_used / E_pv
+    else:
+        self_consumption = 0
+    
+    #Self sufficiency
+    
+    E_cons = E_load + E_hp + E_ev                             # total comsumption
+    
+    if E_cons > 0:   # to avoid dividing by 0
+        self_sufficiency = 100 * (E_cons - E_imp - E_gen) / E_cons
+    else:
+        self_sufficiency = 0
+
+
+    # Sizing -----------------
+ 
+    # CAPEX: 
+    # CAPEX for each technology: size * unit price 
+    capex_pv      = res.C_pv      * PI_c_pv
+    capex_pv_inv  = res.P_nom_pv  * PI_c_inv
+    capex_bss     = res.C_bss     * PI_c_bss
+    capex_bss_inv = res.P_nom_bss * PI_c_inv
+    capex_gen     = res.P_max_gen * PI_c_gen
+    capex_total   = capex_pv + capex_pv_inv + capex_bss + capex_bss_inv + capex_gen
+    annual_capex = capex_total / inv_hor
+
+    #Optimal size:
     C_pv      = res.C_pv
     P_nom_pv  = res.P_nom_pv
     C_bss     = res.C_bss
     P_nom_bss = res.P_nom_bss
     P_max_gen = res.P_max_gen
 
-    print("----- SIZING: OPTIMAL ASSET SIZES -----")
-    print(f"PV system     : {C_pv:.2f} kWp")
-    print(f"PV inverter   : {P_nom_pv:.2f} kW")
-    print(f"Battery       : {C_bss:.2f} kWh")
-    print(f"BSS inverter  : {P_nom_bss:.2f} kW")
-    print(f"Diesel genset : {P_max_gen:.2f} kW")
+    print()
+    print("----- SIZING RESULTS -----")
+
+    # Evergy
+    print("Energy")
+    print()
+    print(f"Simulation period : {res.n_days} days ({res.t_s} steps of {dt*60:.0f} min)")
+    print()
+    print(f"PV produced     : {E_pv:.1f} kWh")
+    print(f"Gen produced    : {E_gen:.1f} kWh")
+    print(f"Imported        : {E_imp:.1f} kWh")
+    print(f"Exported        : {E_exp:.1f} kWh")
+    print()
+    print(f"-> Net energy produced/imported   : {-E_exp+E_pv+E_imp+E_gen:.1f} kWh")
+    print()
+    print(f"Load consumption: {E_load:.1f} kWh")
+    print(f"HP consumption  : {E_hp:.1f} kWh")
+    print(f"EV consumption  : {E_ev:.1f} kWh")
+    print()
+    print(f"-> Total consumption  : {E_cons:.1f} kWh")
+    print()
+    print(f"Self-consumption : {self_consumption:.1f} %")
+    print(f"Self-sufficiency : {self_sufficiency:.1f} %")
+    print("--------------------------------------------------")
     print()
 
-    # CAPEX: size x unit price, for each technology
-    capex_pv      = C_pv      * PI_c_pv
-    capex_pv_inv  = P_nom_pv  * PI_c_inv
-    capex_bss     = C_bss     * PI_c_bss
-    capex_bss_inv = P_nom_bss * PI_c_inv
-    capex_gen     = P_max_gen * PI_c_gen
-    capex_total   = capex_pv + capex_pv_inv + capex_bss + capex_bss_inv + capex_gen
-
-    print(f"CAPEX PV          : {capex_pv:.0f} EUR")
-    print(f"CAPEX PV inverter : {capex_pv_inv:.0f} EUR")
-    print(f"CAPEX battery     : {capex_bss:.0f} EUR")
-    print(f"CAPEX BSS inverter: {capex_bss_inv:.0f} EUR")
-    print(f"CAPEX genset      : {capex_gen:.0f} EUR")
-    print(f"Total CAPEX       : {capex_total:.0f} EUR")
+    # Optimal sizes
+    print("Optimal sizes")
+    print()
+    print(f"PV system     : {C_pv:.1f} kWp")
+    print(f"PV inverter   : {P_nom_pv:.1f} kW")
+    print(f"Battery       : {C_bss:.1f} kWh")
+    print(f"BSS inverter  : {P_nom_bss:.1f} kW")
+    print(f"Diesel genset : {P_max_gen:.1f} kW")
+    print("--------------------------------------------------")
     print()
 
-    # CAPEX is spread over the investment horizon (annualised)
-    annual_capex = capex_total / inv_hor
-    opex = res.objective - annual_capex   # objective = annual CAPEX + OPEX
-
-    print(f"Annualised CAPEX : {annual_capex:.0f} EUR/year")
-    print(f"OPEX             : {opex:.0f} EUR/year")
-    print(f"Total cost/year  : {res.objective:.0f} EUR/year")
-
-    return
+    # Money
+    print("Annual operating costs")
+    print()
+    print(f"Import cost     : {cost_imp:.1f} EUR")
+    print(f"Generator cost  : {cost_gen:.1f} EUR")
+    print(f"Export revenue  : {revenue:.1f} EUR")
+    print() 
+    print(f"-> Total OPEX   : {total_OPEX:.1f} EUR")
+    print()
+    print("One time CAPEX")
+    print()
+    print(f"CAPEX PV          : {capex_pv:.1f} EUR")
+    print(f"CAPEX PV inverter : {capex_pv_inv:.1f} EUR")
+    print(f"CAPEX battery     : {capex_bss:.2f} EUR")
+    print(f"CAPEX BSS inverter: {capex_bss_inv:.1f} EUR")
+    print(f"CAPEX genset      : {capex_gen:.1f} EUR")
+    print()
+    print(f"-> Total CAPEX       : {capex_total:.1f} EUR")
+    print(f"-> Annualised CAPEX : {annual_capex:.1f} EUR/year")
+    print()
+    print(f"Total cost/year  : {total_OPEX + annual_capex:.1f} EUR/year")
+    print(f"Solver objective: {res.objective:.1f} EUR/year      (should be equal to Total cost/year)")
+    print()
+    return 
 
 
 def plot_res_day(res):
@@ -281,6 +357,8 @@ def plot_res_week(res):
     plt.savefig(f'week_start_day_{start_day}.png', dpi=150, bbox_inches='tight')
     plt.show()
 
+
+
 def solve_model(m, res):
     # Solve the optimization problem
     solver = SolverFactory('gurobi')
@@ -320,6 +398,32 @@ def update_model(model, res, SOC_0_bss, SOC_0_ev, T_0_hp):
     model.T_0_hp = T_0_hp
 
     return model
+
+def plot_sizing(budgets, PV, PV_inv, Batt, BSS_inv, Gen, Total):
+    budgets_k = np.array(budgets) / 1000   # x axis in k€
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 9), sharex=True)
+
+    # top plot: optimal sizes vs budget
+    ax1.plot(budgets_k, PV,      marker='o', label='PV system [kWp]')
+    ax1.plot(budgets_k, PV_inv,  marker='o', label='PV inverter [kW]')
+    ax1.plot(budgets_k, Batt,    marker='o', label='Battery [kWh]')
+    ax1.plot(budgets_k, BSS_inv, marker='o', label='BSS inverter [kW]')
+    ax1.plot(budgets_k, Gen,     marker='o', label='Diesel genset [kW]')
+    ax1.set_ylabel('Optimal size')
+    ax1.legend(title='Asset sizes')
+    ax1.grid(True, alpha=0.3)
+
+    # bottom plot: total annual cost vs budget
+    ax2.plot(budgets_k, Total, marker='o', color='black', label='Total cost')
+    ax2.set_xlabel('CAPEX budget [k€]')
+    ax2.set_ylabel('Total cost [€/year]')
+    ax2.legend(title='Annual cost')
+    ax2.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig('sizing_vs_budget.png', dpi=150, bbox_inches='tight')
+    plt.show()
 
 class Results:
     def __init__(self, start_time, n_days, yearly_kwh, yearly_km):

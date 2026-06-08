@@ -3,6 +3,10 @@ from scipy.interpolate import interp1d
 import numpy as np
 import matplotlib.pyplot as plt
 
+# personalized parameter for sizing
+isolated_microgrids = False
+unpaid_exp = True
+
 # Simulation Parameters
 delta_t = 1 / 4                                    # Duration of each time step [hour]
 inv_hor = 20                                       # Investment horizon [year]
@@ -11,7 +15,7 @@ inv_hor = 20                                       # Investment horizon [year]
 #  Costs
 # ==============  Operation  ==================================================
 PI_gen = 0.6                          # Fuel costs for generator [EUR/kWh]
-PI_imp = 0.7                          # Cost of importing energy [EUR/kWh]
+PI_imp = 0.4                          # Cost of importing energy [EUR/kWh]
 PI_exp = 0.03                         # Revenue from exporting energy [EUR/kWh]
 # ==============  Investment  =================================================
 PI_c_pv = 1800                        # Cost of PV capacity [EUR/kWp]
