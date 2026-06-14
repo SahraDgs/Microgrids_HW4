@@ -1,0 +1,169 @@
+
+BASE CASE (point 2) 
+
+----- SIZING RESULTS -----
+Energy
+
+Simulation period : 365 days (35040 steps of 15 min)
+
+PV produced     : 17940.4 kWh
+Gen produced    : 0.0 kWh
+Imported        : 3413.3 kWh
+Exported        : 9930.0 kWh
+
+-> Net energy produced/imported   : 11423.7 kWh
+
+Load consumption: 3900.0 kWh
+HP consumption  : 5139.4 kWh
+EV consumption  : 2209.1 kWh
+
+-> Total consumption  : 11248.5 kWh
+
+Self-consumption : 44.7 %
+Self-sufficiency : 69.7 %
+--------------------------------------------------
+
+Optimal sizes
+
+PV system     : 12.6 kWp
+PV inverter   : 9.7 kW
+Battery       : 26.7 kWh
+BSS inverter  : 7.9 kW
+Diesel genset : 0.0 kW
+--------------------------------------------------
+
+Annual operating costs
+
+Import cost     : 1365.3 EUR
+Generator cost  : 0.0 EUR
+Export revenue  : 297.9 EUR
+
+-> Total OPEX   : 1067.4 EUR
+
+One time CAPEX
+
+CAPEX PV          : 22748.6 EUR
+CAPEX PV inverter : 1447.9 EUR
+CAPEX battery     : 7462.98 EUR
+CAPEX BSS inverter: 1191.3 EUR
+CAPEX genset      : 0.0 EUR
+
+-> Total CAPEX       : 32850.8 EUR
+-> Annualised CAPEX : 1642.5 EUR/year
+
+Total cost/year  : 2709.9 EUR/year
+Solver objective: 2709.9 EUR/year      (should be equal to Total cost/year)
+
+
+========================================================================================
+Isolated microgrids case (point 3.a)
+
+----- SIZING RESULTS -----
+Energy
+
+Simulation period : 365 days (35040 steps of 15 min)
+
+PV produced     : 13492.9 kWh
+Gen produced    : 3132.8 kWh
+Imported        : 0.0 kWh
+Exported        : 0.0 kWh
+
+-> Net energy produced/imported   : 16625.7 kWh
+
+Load consumption: 3900.0 kWh
+HP consumption  : 9662.0 kWh
+EV consumption  : 2683.1 kWh
+
+-> Total consumption  : 16245.1 kWh
+
+Self-consumption : 100.0 %
+Self-sufficiency : 80.7 %
+--------------------------------------------------
+
+Optimal sizes
+
+PV system     : 13.0 kWp
+PV inverter   : 7.2 kW
+Battery       : 34.6 kWh
+BSS inverter  : 8.2 kW
+Diesel genset : 2.1 kW
+--------------------------------------------------
+
+Annual operating costs
+
+Import cost     : 0.0 EUR
+Generator cost  : 1879.7 EUR
+Export revenue  : 0.0 EUR
+
+-> Total OPEX   : 1879.7 EUR
+
+One time CAPEX
+
+CAPEX PV          : 23418.8 EUR
+CAPEX PV inverter : 1086.9 EUR
+CAPEX battery     : 9686.44 EUR
+CAPEX BSS inverter: 1236.4 EUR
+CAPEX genset      : 316.4 EUR
+
+-> Total CAPEX       : 35744.9 EUR
+-> Annualised CAPEX : 1787.2 EUR/year
+
+Total cost/year  : 3666.9 EUR/year
+Solver objective: 3666.9 EUR/year      (should be equal to Total cost/year)
+
+
+=================================================================================
+Export not paid case (point 3.b)
+
+----- SIZING RESULTS -----
+Energy
+
+Simulation period : 365 days (35040 steps of 15 min)
+
+PV produced     : 11075.5 kWh
+Gen produced    : 0.0 kWh
+Imported        : 4162.5 kWh
+Exported        : 2348.7 kWh
+
+-> Net energy produced/imported   : 12889.4 kWh
+
+Load consumption: 3900.0 kWh
+HP consumption  : 6295.7 kWh
+EV consumption  : 2442.5 kWh
+
+-> Total consumption  : 12638.3 kWh
+
+Self-consumption : 78.8 %
+Self-sufficiency : 67.1 %
+--------------------------------------------------
+
+Optimal sizes
+
+PV system     : 8.6 kWp
+PV inverter   : 5.3 kW
+Battery       : 26.1 kWh
+BSS inverter  : 8.2 kW
+Diesel genset : 0.0 kW
+--------------------------------------------------
+
+Annual operating costs
+
+Import cost     : 1665.0 EUR
+Generator cost  : 0.0 EUR
+Export revenue  : 0.0 EUR
+
+-> Total OPEX   : 1665.0 EUR
+
+One time CAPEX
+
+CAPEX PV          : 15537.8 EUR
+CAPEX PV inverter : 789.6 EUR
+CAPEX battery     : 7314.61 EUR
+CAPEX BSS inverter: 1233.9 EUR
+CAPEX genset      : 0.0 EUR
+
+-> Total CAPEX       : 24876.0 EUR
+-> Annualised CAPEX : 1243.8 EUR/year
+
+Total cost/year  : 2908.8 EUR/year
+Solver objective: 2908.8 EUR/year      (should be equal to Total cost/year)
