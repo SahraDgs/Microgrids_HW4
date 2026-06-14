@@ -9,6 +9,7 @@ from param import isolated_microgrids, unpaid_exp       # point 3 for sizing
 from pyomo.environ import ConcreteModel, Param, Var, Objective, Constraint, NonNegativeReals, minimize, value
 from datetime import datetime
 import utils
+import numpy as np
 
 # Constraint Rules definitions
 
@@ -78,7 +79,7 @@ def constraint_rule_SOC_target_leaving(model, i):
     if value(model.t_dep[i]) == 0:   # not leaving -> no constraint rule
         return Constraint.Skip
 
-    return (model.SOC_ev[i-1] == SOC_target_ev *model.C_ev)  # leaving -> must have the target SOC at the previous step
+    return (model.SOC_ev[i-1] >= SOC_target_ev *model.C_ev)  # leaving -> must have the target SOC at the previous step   CHANGE : wa ==
 
 def constraint_rule_Pev_nom_charge(model, i):
     if value(model.EV_connected[i]) == 0:    #if not connected -> impossible to charge
@@ -131,11 +132,11 @@ def constraint_rule_hp_init(model, i):
 
 # Max temperature
 def constraint_rule_T_max(model, i):
-    return model.T_hp[i] <= model.T_set[i] + delta_T_max
+    return model.T_hp[i] <= model.T_set[i] + model.delta_T_max
 
 # Min temperature
 def constraint_rule_T_min(model, i):
-    return model.T_hp[i] >= model.T_set[i] - delta_T_max
+    return model.T_hp[i] >= model.T_set[i] - model.delta_T_max
 
 # Max P HP hot
 def constraint_rule_hp_hot_max(model, i):
@@ -175,7 +176,7 @@ def constraint_rule_budget_limit(model):
 
 
 
-def create_model(res, budget = None):
+def create_model(res, budget = None, delta_T_max_pt5 = None, price_growth = 0.0):
     # Create a concrete model
     model = ConcreteModel()
     
@@ -201,6 +202,7 @@ def create_model(res, budget = None):
     model.SOC_0_bss = Param(initialize=0.5, mutable=True)
     model.SOC_0_ev = Param(initialize=0.5*C_ev, mutable=True)
     model.T_0_hp = Param(initialize=res.T_set[0], mutable=True)
+
 
     # Asset sizes
     model.P_nom_pv = Var(within=NonNegativeReals)                           # Nominal power for PV inverter
@@ -230,6 +232,12 @@ def create_model(res, budget = None):
     # Energy storage variables for battery and EV
     model.SOC_bss = Var(model.periods, within=NonNegativeReals)            # Bss state of charge [kWh]
     model.SOC_ev = Var(model.periods, within=NonNegativeReals)             # EV state of charge [kWh]
+
+    # to make the HP load vary (sizing phase: point 4)
+    if not delta_T_max_pt5 is None:
+        model.delta_T_max = Param(initialize=delta_T_max_pt5, mutable=True)
+    else:
+        model.delta_T_max = Param(initialize=delta_T_max, mutable=True) 
     
     # Define the objective function ----------------------------------------------------------------------------
     #  cost of import of electricity - cost of export of electricity + cost of Generator
@@ -237,8 +245,15 @@ def create_model(res, budget = None):
         PI_exp_case = 0
     else:
         PI_exp_case = PI_exp
-    model.objective = Objective(sense=minimize, expr=sum(delta_t * (PI_imp * model.P_imp[i] - PI_exp_case * model.P_exp[i] + PI_gen * model.P_gen[i]) for i in model.periods) 
-                                +  (PI_c_pv * model.C_pv + PI_c_bss * model.C_bss + PI_c_inv *model.P_nom_bss + PI_c_inv *model.P_nom_pv + PI_c_gen* model.P_max_gen)/inv_hor )
+
+    # average factor over the horizon(1 if price_growth=0)
+    price_factor_avg = np.mean([(1 + price_growth)**y for y in range(inv_hor)])    
+
+    opex_year = sum(delta_t * (PI_imp * model.P_imp[i] - PI_exp_case * model.P_exp[i] + PI_gen * model.P_gen[i]) for i in model.periods)
+
+    capex_annual = (PI_c_pv * model.C_pv + PI_c_bss * model.C_bss + PI_c_inv *model.P_nom_bss + PI_c_inv *model.P_nom_pv + PI_c_gen* model.P_max_gen)/inv_hor
+
+    model.objective = Objective(sense=minimize, expr = price_factor_avg * opex_year + capex_annual)
     
     
     #Constraints ---------------------------------------------------------------------------------------------------------------------------
@@ -285,10 +300,12 @@ def create_model(res, budget = None):
     # Battery (sizing phase)
     model.constraint_SOC_bss_same_state = Constraint(rule=constraint_rule_SOC_bss_same_state)
 
-    if budget:
+    # to set a budget limit (sizing phase: point 4)
+    if not budget is None:
         model.budget = Param(initialize=budget)
         model.constraint_budget_limit = Constraint(rule=constraint_rule_budget_limit)
-
+    
+    
 
     return model
 
@@ -302,13 +319,13 @@ def run(model, results):
     return None             # modif for budget part
 
 #Phase 2: point 4 budget ----------------------
-def budget_dependance():
+def budget_dependance(n_days, start_time):
     start_time = datetime(2021, 1, 1, 0, 0, 0)                                  
     n_days = 365                                                                
 
     results = utils.Results(start_time, n_days, yearly_kwh=3900, yearly_km=14770)
 
-    budget_list = list(range(5000, 34000, 2000)) 
+    budget_list = list(range(5000, 40000, 3000)) 
     PV_system_sizes = []
     PV_inverter_sizes = []
     Battery_sizes = []
@@ -316,13 +333,15 @@ def budget_dependance():
     Diesel_genset_sizes = []
     kept_budgets = []
     Total = []
-    for i, budget in enumerate(budget_list): 
-        model = create_model(results, budget)
+    for budget_i in budget_list: 
+        model = create_model(results, budget=budget_i)
         run_res = run(model, results)
         if run_res is None:
-            print(f"Budget {budget}: infeasible")
+            print(f"Budget {budget_i}: infeasible")
             continue
-        kept_budgets.append(budget)
+
+        #save results
+        kept_budgets.append(budget_i)
         PV_system_sizes.append(results.C_pv)
         PV_inverter_sizes.append(results.P_nom_pv)
         Battery_sizes.append(results.C_bss)
@@ -330,9 +349,121 @@ def budget_dependance():
         Diesel_genset_sizes.append(results.P_max_gen)
         Total.append(results.objective)
 
-    utils.plot_sizing(kept_budgets, PV_system_sizes, PV_inverter_sizes, Battery_sizes, BSS_inverter_sizes, Diesel_genset_sizes, Total)
+    utils.plot_sizing_budget(kept_budgets, PV_system_sizes, PV_inverter_sizes, Battery_sizes, BSS_inverter_sizes, Diesel_genset_sizes, Total)
 
+def HP_dependance(n_days, start_time):
 
+    temp_range_list = list(np.arange(0, 15, 1)) 
+    PV_system_sizes = []
+    PV_inverter_sizes = []
+    Battery_sizes = []
+    BSS_inverter_sizes = []
+    Diesel_genset_sizes = []
+    kept_temp_range = []
+    Total = []
+    for temp_range_i in temp_range_list:
+        results = utils.Results(start_time, n_days, yearly_kwh=3900, yearly_km=14770)
+        model = create_model(results, delta_T_max_pt5=temp_range_i)
+        run_res = run(model, results)
+        if run_res is None:
+            print(f"comfort temperature {temp_range_i}: infeasible")
+            continue
+
+        #save results
+        kept_temp_range.append(temp_range_i)
+        PV_system_sizes.append(results.C_pv)
+        PV_inverter_sizes.append(results.P_nom_pv)
+        Battery_sizes.append(results.C_bss)
+        BSS_inverter_sizes.append(results.P_nom_bss)
+        Diesel_genset_sizes.append(results.P_max_gen)
+        Total.append(results.objective)
+
+    utils.plot_sizing(kept_temp_range, PV_system_sizes, PV_inverter_sizes, Battery_sizes, BSS_inverter_sizes, Diesel_genset_sizes, "HP")
+
+    
+
+def EV_dependance(n_days, start_time):
+                                                                
+
+    yearly_km_list = list(range(0, 30000, 2000)) 
+    PV_system_sizes = []
+    PV_inverter_sizes = []
+    Battery_sizes = []
+    BSS_inverter_sizes = []
+    Diesel_genset_sizes = []
+    kept_yearly_km = []
+    Total = []
+    for yearly_km_i in yearly_km_list:
+        results = utils.Results(start_time, n_days, yearly_kwh=3900, yearly_km=yearly_km_i)
+        model = create_model(results)
+        run_res = run(model, results)
+        if run_res is None:
+            print(f"yearly_km {yearly_km_i}: infeasible")
+            continue
+
+        #save results
+        kept_yearly_km.append(yearly_km_i)
+        PV_system_sizes.append(results.C_pv)
+        PV_inverter_sizes.append(results.P_nom_pv)
+        Battery_sizes.append(results.C_bss)
+        BSS_inverter_sizes.append(results.P_nom_bss)
+        Diesel_genset_sizes.append(results.P_max_gen)
+        Total.append(results.objective)
+
+    utils.plot_sizing(kept_yearly_km, PV_system_sizes, PV_inverter_sizes, Battery_sizes, BSS_inverter_sizes, Diesel_genset_sizes, "EV")
+
+def base_load_dependance(n_days, start_time):
+
+    yearly_kwh_list = list(range(0, 7000, 500)) 
+    PV_system_sizes = []
+    PV_inverter_sizes = []
+    Battery_sizes = []
+    BSS_inverter_sizes = []
+    Diesel_genset_sizes = []
+    kept_yearly_kwh = []
+    Total = []
+    for yearly_kwh_i in yearly_kwh_list:
+        results = utils.Results(start_time, n_days, yearly_kwh=yearly_kwh_i, yearly_km=14770)
+        model = create_model(results)
+        run_res = run(model, results)
+        if run_res is None:
+            print(f"yearly_kwh {yearly_kwh_i}: infeasible")
+            continue
+
+        #save results
+        kept_yearly_kwh.append(yearly_kwh_i)
+        PV_system_sizes.append(results.C_pv)
+        PV_inverter_sizes.append(results.P_nom_pv)
+        Battery_sizes.append(results.C_bss)
+        BSS_inverter_sizes.append(results.P_nom_bss)
+        Diesel_genset_sizes.append(results.P_max_gen)
+        Total.append(results.objective)
+
+    utils.plot_sizing(kept_yearly_kwh, PV_system_sizes, PV_inverter_sizes, Battery_sizes, BSS_inverter_sizes, Diesel_genset_sizes, "baseload")
+
+def cost_dependance_horizon(n_days, start_time):
+
+    price_growth_list = [-0.08, -0.04, 0.0, 0.04, 0.08]
+    PV_system_sizes = []
+    PV_inverter_sizes = []
+    Battery_sizes = []
+    BSS_inverter_sizes = []
+    Diesel_genset_sizes = []
+    Total = []
+    for price_growth_i in price_growth_list:
+        results = utils.Results(start_time, n_days, yearly_kwh=3900, yearly_km=14770)
+        model = create_model(results, price_growth = price_growth_i)
+        run(model, results)
+
+        #save results
+        PV_system_sizes.append(results.C_pv)
+        PV_inverter_sizes.append(results.P_nom_pv)
+        Battery_sizes.append(results.C_bss)
+        BSS_inverter_sizes.append(results.P_nom_bss)
+        Diesel_genset_sizes.append(results.P_max_gen)
+        Total.append(results.objective)
+
+    utils.plot_sizing(price_growth_list, PV_system_sizes, PV_inverter_sizes, Battery_sizes, BSS_inverter_sizes, Diesel_genset_sizes, "Price_growth")
 
 
 if __name__ == "__main__":
@@ -342,4 +473,9 @@ if __name__ == "__main__":
     results = utils.Results(start_time, n_days, yearly_kwh=3900, yearly_km=14770)      # Initialize results object with start time and number of days, yearly consumption and km driven
     model = create_model(results)
     run(model, results)
-    budget_dependance()
+    #budget_dependance(n_days, start_time)
+    #HP_dependance(n_days, start_time)
+    #EV_dependance(n_days, start_time)
+    base_load_dependance(n_days, start_time)
+    cost_dependance_horizon(n_days, start_time)
+

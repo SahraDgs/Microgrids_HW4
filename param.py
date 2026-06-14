@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 
 # personalized parameter for sizing
 isolated_microgrids = False
-unpaid_exp = True
+unpaid_exp = False
 
 # Simulation Parameters
 delta_t = 1 / 4                                    # Duration of each time step [hour]

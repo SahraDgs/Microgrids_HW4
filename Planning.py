@@ -207,8 +207,8 @@ def create_model(res,C_pv,C_bss,P_nom_bss, P_nom_pv, P_max_gen):
     
     # Define the objective function ----------------------------------------------------------------------------
     model.objective = Objective(sense=minimize, 
-    expr=sum(delta_t * (PI_imp * model.P_imp[i] - PI_exp * model.P_exp[i] + PI_gen * model.P_gen[i]) #  cost of import of electricity - cost of export of electricity + cost of Generator
-    for i in model.periods))
+    expr=sum(delta_t * (PI_imp * model.P_imp[i] - PI_exp * model.P_exp[i] + PI_gen * model.P_gen[i])for i in model.periods)) #  cost of import of electricity - cost of export of electricity + cost of Generator
+    
     
     #Constraints ---------------------------------------------------------------------------------------------------------------------------
     

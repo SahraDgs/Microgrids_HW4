@@ -46,11 +46,11 @@ def check_res(res):
                 n_errors += 1
 
         # 5. House temperature comfort bounds
-        if res.T_hp[t] < res.T_set[t] - delta_T_max - eps:
-            print(f"[t={t}] T_hp below comfort: {res.T_hp[t]:f} < {res.T_set[t] - delta_T_max:f}")
+        if res.T_hp[t] < res.T_set[t] - res.delta_T_max - eps:
+            print(f"[t={t}] T_hp below comfort: {res.T_hp[t]:f} < {res.T_set[t] - res.delta_T_max:f}")
             n_errors += 1
-        if res.T_hp[t] > res.T_set[t] + delta_T_max + eps:
-            print(f"[t={t}] T_hp above comfort: {res.T_hp[t]:f} > {res.T_set[t] + delta_T_max:f}")
+        if res.T_hp[t] > res.T_set[t] + res.delta_T_max + eps:
+            print(f"[t={t}] T_hp above comfort: {res.T_hp[t]:f} > {res.T_set[t] + res.delta_T_max:f}")
             n_errors += 1
 
 
@@ -290,10 +290,10 @@ def plot_res_day(res):
     '''
 
     # Graph 3: battery SOC (%)
-    ax3.plot(time_x, SOC_bss_pct, label='Battery SOC')
-    ax3.plot(time_x, SOC_ev_pct, label='EV SOC')
-    ax3.axhline(100 * SOC_min_bss, color='red', linestyle='--', label='SOC min')
-    ax3.axhline(100 * SOC_max_bss, color='green', linestyle='--', label='SOC max')
+    ax3.plot(time_x,SOC_bss_pct, label='Battery SOC')
+    ax3.plot(time_x,SOC_ev_pct, label='EV SOC')
+    ax3.axhline(100 * SOC_min_bss,color='red', linestyle='--', label='SOC min')
+    ax3.axhline(100 * SOC_max_bss,color='green', linestyle='--', label='SOC max')
     ax3.set_ylabel('SOC [%]')
     ax3.set_xlabel('Time [h]')
     ax3.legend(title='Battery state of charge')
@@ -301,7 +301,7 @@ def plot_res_day(res):
 
     plt.tight_layout()
     plt.savefig(f'day_{day}_ImportCost_7.png', dpi=150, bbox_inches='tight')
-    plt.show()
+    #plt.show()
 
 
 # The following function is not used in the main code as explained in the report
@@ -355,7 +355,7 @@ def plot_res_week(res):
 
     plt.tight_layout()
     plt.savefig(f'week_start_day_{start_day}.png', dpi=150, bbox_inches='tight')
-    plt.show()
+    #plt.show()
 
 
 
@@ -399,31 +399,74 @@ def update_model(model, res, SOC_0_bss, SOC_0_ev, T_0_hp):
 
     return model
 
-def plot_sizing(budgets, PV, PV_inv, Batt, BSS_inv, Gen, Total):
-    budgets_k = np.array(budgets) / 1000   # x axis in k€
+def plot_sizing_budget(x_axis, PV, PV_inv, Batt, BSS_inv, Gen, Total):
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 9), sharex=True)
+
+    x_axis = np.array(x_axis) / 1000   # x axis in k€
+
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(9, 6), sharex=True)
 
     # top plot: optimal sizes vs budget
-    ax1.plot(budgets_k, PV,      marker='o', label='PV system [kWp]')
-    ax1.plot(budgets_k, PV_inv,  marker='o', label='PV inverter [kW]')
-    ax1.plot(budgets_k, Batt,    marker='o', label='Battery [kWh]')
-    ax1.plot(budgets_k, BSS_inv, marker='o', label='BSS inverter [kW]')
-    ax1.plot(budgets_k, Gen,     marker='o', label='Diesel genset [kW]')
+    ax1.plot(x_axis, PV, marker='o', label='PV system [kWp]')
+    ax1.plot(x_axis, PV_inv, marker='o', label='PV inverter [kW]')
+    ax1.plot(x_axis, Batt, marker='o', label='Battery SS [kWh]')
+    ax1.plot(x_axis, BSS_inv, marker='o', label='BSS inverter [kW]')
+    ax1.plot(x_axis, Gen, marker='o', label='Diesel genset [kW]')
     ax1.set_ylabel('Optimal size')
     ax1.legend(title='Asset sizes')
     ax1.grid(True, alpha=0.3)
 
-    # bottom plot: total annual cost vs budget
-    ax2.plot(budgets_k, Total, marker='o', color='black', label='Total cost')
-    ax2.set_xlabel('CAPEX budget [k€]')
+    ax2.plot(x_axis, Total, marker='o', color='black', label='Total cost')
     ax2.set_ylabel('Total cost [€/year]')
-    ax2.legend(title='Annual cost')
     ax2.grid(True, alpha=0.3)
+    
 
-    plt.tight_layout()
+    # bottom plot: total annual cost vs budget    
+    ax2.set_xlabel('CAPEX budget [k€]')
     plt.savefig('sizing_vs_budget.png', dpi=150, bbox_inches='tight')
-    plt.show()
+    
+    
+
+def plot_sizing(x_axis, PV, PV_inv, Batt, BSS_inv, Gen, Type):
+
+   
+    x_axis = np.array(x_axis)
+
+    fig, ax1 = plt.subplots(1, 1, figsize=(9, 3))
+
+    # top plot: optimal sizes vs budget
+    ax1.plot(x_axis, PV, marker='o', markersize = 4 , label='PV system [kWp]')
+    ax1.plot(x_axis, PV_inv, marker='o',markersize = 4 , label='PV inverter [kW]')
+    ax1.plot(x_axis, Batt, marker='o',markersize = 4 , label='Battery SS [kWh]')
+    ax1.plot(x_axis, BSS_inv, marker='o',markersize = 4 , label='BSS inverter [kW]')
+    ax1.plot(x_axis, Gen, marker='o',markersize = 4 , label='Diesel genset [kW]')
+    ax1.set_ylabel('Optimal size')
+    ax1.grid(True, alpha=0.3)
+
+
+    # bottom plot: total annual cost vs budget
+    
+    if Type == "HP":
+        ax1.set_xlabel('HP: Comfort temperature range [°C]')
+        plt.savefig('sizing_vs_HPload.png', dpi=150, bbox_inches='tight')  
+    elif Type == "EV":
+        ax1.set_xlabel('EV usage [km/year]')
+        plt.savefig('sizing_vs_EVload.png', dpi=150, bbox_inches='tight')
+    elif Type == "baseload":
+        ax1.set_xlabel('Yearly load [kwh/year]')
+        ax1.legend(title='Asset sizes', loc='upper left', bbox_to_anchor=(1.02, 1))
+        plt.savefig('sizing_vs_baseload.png', dpi=150, bbox_inches='tight')
+    elif Type == "Price_growth":
+        ax1.set_xlabel('Price growth coefficient []')
+        ax1.legend(title='Asset sizes', loc='upper left', bbox_to_anchor=(1.02, 1))
+        plt.savefig('sizing_vs_pricegrowth.png', dpi=150, bbox_inches='tight') 
+    else:
+        print("invalid Type parameter")
+    
+
+    
+
 
 class Results:
     def __init__(self, start_time, n_days, yearly_kwh, yearly_km):
@@ -471,6 +514,9 @@ class Results:
         self.C_ev = m.C_ev.value
         self.P_nom_ev = m.P_nom_ev.value
         self.P_max_gen = m.P_max_gen.value
+
+        #added for pt 5
+        self.delta_T_max = m.delta_T_max.value
 
 
 def save_results(res, m):
